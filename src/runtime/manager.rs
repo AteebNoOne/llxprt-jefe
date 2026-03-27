@@ -516,10 +516,7 @@ impl RuntimeManager for TmuxRuntimeManager {
 
         // Kill tmux session
         if session.launch_signature.remote.enabled {
-            commands::kill_remote_session(
-                &session.launch_signature.remote,
-                &session.session_name,
-            )?;
+            commands::kill_remote_session(&session.launch_signature.remote, &session.session_name)?;
         } else {
             commands::kill_session(&session.session_name)?;
         }

@@ -22,7 +22,10 @@ pub enum PreflightIssue {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PreflightAction {
     /// Run a shell command to start the container runtime.
-    StartContainerRuntime { engine: SandboxEngine, command: String },
+    StartContainerRuntime {
+        engine: SandboxEngine,
+        command: String,
+    },
     /// Run `ssh-add` to load a key (the user picks the key path interactively).
     SshAdd,
 }
@@ -40,11 +43,9 @@ impl PreflightIssue {
                     start_hint,
                 )
             }
-            Self::SshAgentNoIdentities => {
-                "SSH agent has no identities loaded. Run ssh-add?\n\n\
+            Self::SshAgentNoIdentities => "SSH agent has no identities loaded. Run ssh-add?\n\n\
                  [Enter] run ssh-add  |  [Esc] cancel launch"
-                    .to_owned()
-            }
+                .to_owned(),
         }
     }
 
@@ -140,10 +141,7 @@ pub fn sandbox_preflight(engine: SandboxEngine) -> Option<PreflightIssue> {
             SandboxEngine::Docker => "open -a Docker".to_owned(),
             SandboxEngine::Seatbelt => return None,
         };
-        return Some(PreflightIssue::ContainerRuntimeNotRunning {
-            engine,
-            start_hint,
-        });
+        return Some(PreflightIssue::ContainerRuntimeNotRunning { engine, start_hint });
     }
 
     if !ssh_agent_has_identities() {
@@ -173,9 +171,7 @@ pub fn execute_preflight_action(action: &PreflightAction) -> Result<(), String> 
         }
         PreflightAction::SshAdd => {
             // Find the first private key in ~/.ssh that looks usable.
-            let ssh_dir = dirs::home_dir()
-                .map(|h| h.join(".ssh"))
-                .unwrap_or_default();
+            let ssh_dir = dirs::home_dir().map(|h| h.join(".ssh")).unwrap_or_default();
             let key_candidates = ["id_ed25519", "id_rsa", "id_ecdsa"];
             let key_path = key_candidates
                 .iter()
