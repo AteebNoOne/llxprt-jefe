@@ -442,7 +442,9 @@ impl RuntimeManager for TmuxRuntimeManager {
             let _ = self.viewer.take();
 
             // Get session name for spawning
-            let session = self.sessions.get(agent_id).expect("session must exist");
+            let Some(session) = self.sessions.get(agent_id) else {
+                return Err(RuntimeError::SessionNotFound(agent_id.0.clone()));
+            };
             let session_name = session.session_name.clone();
 
             // Spawn new viewer
@@ -516,10 +518,7 @@ impl RuntimeManager for TmuxRuntimeManager {
 
         // Kill tmux session
         if session.launch_signature.remote.enabled {
-            commands::kill_remote_session(
-                &session.launch_signature.remote,
-                &session.session_name,
-            )?;
+            commands::kill_remote_session(&session.launch_signature.remote, &session.session_name)?;
         } else {
             commands::kill_session(&session.session_name)?;
         }
@@ -563,14 +562,14 @@ impl RuntimeManager for TmuxRuntimeManager {
     }
 
     fn session_exists(&self, agent_id: &AgentId) -> bool {
-        if let Some(session) = self.sessions.get(agent_id) {
-            if session.launch_signature.remote.enabled {
-                return commands::remote_session_exists(
-                    &session.launch_signature.remote,
-                    &session.session_name,
-                )
-                .unwrap_or(false);
-            }
+        if let Some(session) = self.sessions.get(agent_id)
+            && session.launch_signature.remote.enabled
+        {
+            return commands::remote_session_exists(
+                &session.launch_signature.remote,
+                &session.session_name,
+            )
+            .unwrap_or(false);
         }
 
         let session_name = RuntimeSession::session_name_for(agent_id);

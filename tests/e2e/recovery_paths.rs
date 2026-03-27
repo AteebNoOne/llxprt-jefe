@@ -234,6 +234,7 @@ fn startup_recovery_corrupt_settings_valid_state() {
         agents: vec![],
         selected_repository_index: Some(5),
         selected_agent_index: None,
+        hide_idle_repositories: false,
         last_selected_agent_by_repo: vec![],
     };
     let state_json = serde_json::to_string(&valid_state).unwrap();

@@ -6,7 +6,7 @@
 //!
 //! These tests verify split mode (repository management) behavior.
 
-use jefe::domain::{Repository, RepositoryId};
+use jefe::domain::{Agent, AgentId, AgentStatus, Repository, RepositoryId};
 use jefe::state::{AppEvent, AppState, ScreenMode};
 use std::path::PathBuf;
 
@@ -123,6 +123,53 @@ fn grab_mode_move_down_reorders_repository() {
     assert_eq!(state.repositories[1].name, "llxprt-code");
     assert_eq!(state.split_grab_index, Some(1));
     assert_eq!(state.selected_repository_index, Some(1));
+}
+
+#[test]
+fn grab_mode_uses_visible_index_space_when_idle_repositories_hidden() {
+    let mut state = create_split_test_state();
+    state.hide_idle_repositories = true;
+
+    let repo1_id = state.repositories[0].id.clone();
+    let repo2_id = state.repositories[1].id.clone();
+    let repo3_id = state.repositories[2].id.clone();
+
+    let mut repo1_running = Agent::new(
+        AgentId("a1".into()),
+        repo1_id.clone(),
+        "Repo1 Running".into(),
+        PathBuf::from("/projects/llxprt-code/a1"),
+    );
+    repo1_running.status = AgentStatus::Running;
+
+    let repo2_idle = Agent::new(
+        AgentId("a2".into()),
+        repo2_id.clone(),
+        "Repo2 Idle".into(),
+        PathBuf::from("/projects/starflight/a2"),
+    );
+
+    let mut repo3_running = Agent::new(
+        AgentId("a3".into()),
+        repo3_id.clone(),
+        "Repo3 Running".into(),
+        PathBuf::from("/projects/gable-work/a3"),
+    );
+    repo3_running.status = AgentStatus::Running;
+
+    state.agents = vec![repo1_running, repo2_idle, repo3_running];
+    state.selected_repository_index = Some(2);
+
+    state = state.apply(AppEvent::EnterGrabMode);
+    assert_eq!(state.split_grab_index, Some(1));
+
+    state = state.apply(AppEvent::GrabMoveUp);
+
+    assert_eq!(state.repositories[0].id, repo3_id);
+    assert_eq!(state.repositories[1].id, repo2_id);
+    assert_eq!(state.repositories[2].id, repo1_id);
+    assert_eq!(state.split_grab_index, Some(0));
+    assert_eq!(state.selected_repository_index, Some(0));
 }
 
 #[test]

@@ -19,8 +19,8 @@ pub use errors::RuntimeError;
 pub use liveness::{check_remote_session_alive, check_session_alive};
 pub use manager::{LivenessCheck, RuntimeManager, StubRuntimeManager, TmuxRuntimeManager};
 pub use preflight::{
-    execute_preflight_action, sandbox_preflight, sandbox_ssh_agent_warning, PreflightAction,
-    PreflightIssue,
+    PreflightAction, PreflightIssue, execute_preflight_action, sandbox_preflight,
+    sandbox_ssh_agent_warning,
 };
 pub use session::{RuntimeSession, TerminalCell, TerminalCellStyle, TerminalSnapshot};
 

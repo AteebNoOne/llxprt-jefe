@@ -75,6 +75,8 @@ pub struct State {
     pub selected_repository_index: Option<usize>,
     pub selected_agent_index: Option<usize>,
     #[serde(default)]
+    pub hide_idle_repositories: bool,
+    #[serde(default)]
     pub last_selected_agent_by_repo: Vec<(RepositoryId, AgentId)>,
 }
 
@@ -87,6 +89,7 @@ impl State {
             agents: Vec::new(),
             selected_repository_index: None,
             selected_agent_index: None,
+            hide_idle_repositories: false,
             last_selected_agent_by_repo: Vec::new(),
         }
     }
@@ -429,6 +432,7 @@ mod tests {
             agents: vec![],
             selected_repository_index: Some(2),
             selected_agent_index: None,
+            hide_idle_repositories: true,
             last_selected_agent_by_repo: vec![],
         };
 
@@ -436,6 +440,7 @@ mod tests {
         let loaded = mgr.load_state().expect("should load");
 
         assert_eq!(loaded.selected_repository_index, Some(2));
+        assert!(loaded.hide_idle_repositories);
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&temp);

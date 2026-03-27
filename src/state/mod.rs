@@ -222,7 +222,6 @@ pub enum ModalState {
         /// The remaining issues to check after this one is resolved.
         remaining_issues: Vec<PreflightIssue>,
     },
-
 }
 
 /// Screen mode variants.
@@ -258,6 +257,7 @@ pub struct AppState {
     pub screen_mode: ScreenMode,
     pub pane_focus: PaneFocus,
     pub terminal_focused: bool,
+    pub hide_idle_repositories: bool,
 
     // Modal/form state
     pub modal: ModalState,
@@ -286,6 +286,7 @@ pub enum AppEvent {
     // Focus
     CyclePaneFocus,
     ToggleTerminalFocus,
+    ToggleHideIdleRepositories,
 
     // Screen mode
     EnterSplitMode,
@@ -352,7 +353,9 @@ impl AppState {
 
     #[must_use]
     pub fn repository_by_id(&self, repository_id: &RepositoryId) -> Option<&Repository> {
-        self.repositories.iter().find(|repo| &repo.id == repository_id)
+        self.repositories
+            .iter()
+            .find(|repo| &repo.id == repository_id)
     }
 
     #[must_use]
@@ -437,6 +440,33 @@ impl AppState {
         self.selected_agent_index = visible_indices.first().copied();
     }
 
+    fn has_running_agent_in_repository(&self, repository_id: &RepositoryId) -> bool {
+        self.agents
+            .iter()
+            .any(|agent| &agent.repository_id == repository_id && agent.is_running())
+    }
+
+    #[must_use]
+    pub fn visible_repository_indices(&self) -> Vec<usize> {
+        self.repositories
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, repository)| {
+                (!self.hide_idle_repositories
+                    || self.has_running_agent_in_repository(&repository.id))
+                .then_some(idx)
+            })
+            .collect()
+    }
+
+    #[must_use]
+    pub fn selected_repository_visible_index(&self) -> Option<usize> {
+        let selected = self.selected_repository_index?;
+        self.visible_repository_indices()
+            .iter()
+            .position(|idx| *idx == selected)
+    }
+
     #[must_use]
     pub fn agent_indices_for_repository(&self, repository_id: &RepositoryId) -> Vec<usize> {
         self.agents
@@ -476,6 +506,20 @@ impl AppState {
             self.selected_repository_index = Some(self.repositories.len().saturating_sub(1));
         }
 
+        let visible_repo_indices = self.visible_repository_indices();
+        if visible_repo_indices.is_empty() {
+            self.selected_repository_index = None;
+            self.selected_agent_index = None;
+            return;
+        }
+
+        if self
+            .selected_repository_index
+            .map_or(true, |idx| !visible_repo_indices.contains(&idx))
+        {
+            self.selected_repository_index = visible_repo_indices.first().copied();
+        }
+
         let Some(repository_id) = self.selected_repository_id().cloned() else {
             self.selected_agent_index = None;
             return;
@@ -513,7 +557,7 @@ impl AppState {
     /// @requirement REQ-TECH-003
     /// @pseudocode component-001 lines 13-33
     #[must_use]
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     pub fn apply(mut self, event: AppEvent) -> Self {
         trace!(
             event = ?event,
@@ -547,7 +591,10 @@ impl AppState {
             AppEvent::NavigateUp => self.handle_navigate_up(),
             AppEvent::NavigateDown => self.handle_navigate_down(),
             AppEvent::SelectRepository(idx) => {
-                if idx < self.repositories.len() {
+                if idx < self.repositories.len()
+                    && (!self.hide_idle_repositories
+                        || self.visible_repository_indices().contains(&idx))
+                {
                     self.remember_selected_agent_for_current_repo();
                     self.selected_repository_index = Some(idx);
                     self.restore_selected_agent_for_current_repo();
@@ -568,12 +615,15 @@ impl AppState {
                         (agent.shortcut_slot == Some(slot))
                             .then_some((idx, agent.repository_id.clone()))
                     })
-                {
-                    self.remember_selected_agent_for_current_repo();
-                    self.selected_repository_index = self
+                    && let Some(target_repo_idx) = self
                         .repositories
                         .iter()
-                        .position(|repo| repo.id == target_repo_id);
+                        .position(|repo| repo.id == target_repo_id)
+                    && (!self.hide_idle_repositories
+                        || self.visible_repository_indices().contains(&target_repo_idx))
+                {
+                    self.remember_selected_agent_for_current_repo();
+                    self.selected_repository_index = Some(target_repo_idx);
                     self.selected_agent_index = Some(agent_idx);
                     self.pane_focus = PaneFocus::Agents;
                     self.terminal_focused = false;
@@ -606,6 +656,10 @@ impl AppState {
                     "toggled terminal focus"
                 );
             }
+            AppEvent::ToggleHideIdleRepositories => {
+                self.hide_idle_repositories = !self.hide_idle_repositories;
+                self.normalize_selection_indices();
+            }
 
             // Screen mode
             AppEvent::EnterSplitMode => {
@@ -619,30 +673,41 @@ impl AppState {
 
             // Grab mode for split view reordering
             AppEvent::EnterGrabMode => {
-                if let Some(idx) = self.selected_repository_index {
-                    self.split_grab_index = Some(idx);
-                }
+                self.split_grab_index = self.selected_repository_visible_index();
             }
             AppEvent::ExitGrabMode => {
                 self.split_grab_index = None;
             }
             AppEvent::GrabMoveUp => {
-                if let Some(grab_idx) = self.split_grab_index
-                    && grab_idx > 0
-                    && grab_idx < self.repositories.len()
+                if let Some(grab_visible_idx) = self.split_grab_index
+                    && grab_visible_idx > 0
                 {
-                    self.repositories.swap(grab_idx, grab_idx - 1);
-                    self.split_grab_index = Some(grab_idx - 1);
-                    self.selected_repository_index = Some(grab_idx - 1);
+                    let visible_repo_indices = self.visible_repository_indices();
+                    if let (Some(&current_global_idx), Some(&target_global_idx)) = (
+                        visible_repo_indices.get(grab_visible_idx),
+                        visible_repo_indices.get(grab_visible_idx - 1),
+                    ) {
+                        self.repositories
+                            .swap(current_global_idx, target_global_idx);
+                        self.split_grab_index = Some(grab_visible_idx - 1);
+                        self.selected_repository_index = Some(target_global_idx);
+                    }
                 }
             }
             AppEvent::GrabMoveDown => {
-                if let Some(grab_idx) = self.split_grab_index
-                    && grab_idx + 1 < self.repositories.len()
-                {
-                    self.repositories.swap(grab_idx, grab_idx + 1);
-                    self.split_grab_index = Some(grab_idx + 1);
-                    self.selected_repository_index = Some(grab_idx + 1);
+                if let Some(grab_visible_idx) = self.split_grab_index {
+                    let visible_repo_indices = self.visible_repository_indices();
+                    if grab_visible_idx + 1 < visible_repo_indices.len()
+                        && let (Some(&current_global_idx), Some(&target_global_idx)) = (
+                            visible_repo_indices.get(grab_visible_idx),
+                            visible_repo_indices.get(grab_visible_idx + 1),
+                        )
+                    {
+                        self.repositories
+                            .swap(current_global_idx, target_global_idx);
+                        self.split_grab_index = Some(grab_visible_idx + 1);
+                        self.selected_repository_index = Some(target_global_idx);
+                    }
                 }
             }
             AppEvent::SetSplitFilter(filter) => {
@@ -897,9 +962,11 @@ impl AppState {
     fn handle_navigate_up(&mut self) {
         match self.pane_focus {
             PaneFocus::Repositories => {
-                if let Some(idx) = self.selected_repository_index.filter(|&i| i > 0) {
+                let visible_repo_indices = self.visible_repository_indices();
+                let selected_visible_idx = self.selected_repository_visible_index();
+                if let Some(visible_idx) = selected_visible_idx.filter(|&idx| idx > 0) {
                     self.remember_selected_agent_for_current_repo();
-                    self.selected_repository_index = Some(idx - 1);
+                    self.selected_repository_index = Some(visible_repo_indices[visible_idx - 1]);
                     self.restore_selected_agent_for_current_repo();
                 }
             }
@@ -940,13 +1007,14 @@ impl AppState {
     fn handle_navigate_down(&mut self) {
         match self.pane_focus {
             PaneFocus::Repositories => {
-                if let Some(idx) = self.selected_repository_index {
-                    let max = self.repositories.len().saturating_sub(1);
-                    if idx < max {
-                        self.remember_selected_agent_for_current_repo();
-                        self.selected_repository_index = Some(idx + 1);
-                        self.restore_selected_agent_for_current_repo();
-                    }
+                let visible_repo_indices = self.visible_repository_indices();
+                let selected_visible_idx = self.selected_repository_visible_index();
+                if let Some(visible_idx) = selected_visible_idx
+                    && visible_idx + 1 < visible_repo_indices.len()
+                {
+                    self.remember_selected_agent_for_current_repo();
+                    self.selected_repository_index = Some(visible_repo_indices[visible_idx + 1]);
+                    self.restore_selected_agent_for_current_repo();
                 }
             }
             PaneFocus::Agents => {
@@ -1001,7 +1069,7 @@ impl AppState {
 
     // Form handling methods
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     fn handle_form_char(&mut self, c: char) {
         let mut refresh_work_dir = false;
 
@@ -1203,8 +1271,7 @@ impl AppState {
                     delete_char_before(&mut fields.default_profile, cursor.default_profile);
             }
             RepositoryFormFocus::LoginUser => {
-                cursor.login_user =
-                    delete_char_before(&mut fields.login_user, cursor.login_user);
+                cursor.login_user = delete_char_before(&mut fields.login_user, cursor.login_user);
             }
             RepositoryFormFocus::Host => {
                 cursor.host = delete_char_before(&mut fields.host, cursor.host);
@@ -1219,7 +1286,7 @@ impl AppState {
 
     fn delete_repository_field_at_cursor(
         fields: &mut RepositoryFormFields,
-        cursor: &mut RepositoryFormCursor,
+        cursor: &RepositoryFormCursor,
         focus: RepositoryFormFocus,
     ) {
         match focus {
@@ -1286,7 +1353,7 @@ impl AppState {
 
     fn delete_agent_field_at_cursor(
         fields: &mut AgentFormFields,
-        cursor: &mut AgentFormCursor,
+        cursor: &AgentFormCursor,
         focus: AgentFormFocus,
     ) {
         match focus {
@@ -1377,7 +1444,6 @@ impl AppState {
         let mut refresh_work_dir = false;
 
         match &mut self.modal {
-            ModalState::Search { .. } => {}
             ModalState::NewRepository {
                 fields,
                 focus,
@@ -1428,7 +1494,6 @@ impl AppState {
 
     fn handle_form_move_cursor_left(&mut self) {
         match &mut self.modal {
-            ModalState::Search { .. } => {}
             ModalState::NewRepository { focus, cursor, .. }
             | ModalState::EditRepository { focus, cursor, .. } => match focus {
                 RepositoryFormFocus::RemoteEnabled | RepositoryFormFocus::SetupEnvDefault => {}
@@ -1483,9 +1548,9 @@ impl AppState {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn handle_form_move_cursor_right(&mut self) {
         match &mut self.modal {
-            ModalState::Search { .. } => {}
             ModalState::NewRepository {
                 fields,
                 focus,
@@ -1516,8 +1581,7 @@ impl AppState {
                     cursor.host = move_cursor_right(&fields.host, cursor.host);
                 }
                 RepositoryFormFocus::RunAsUser => {
-                    cursor.run_as_user =
-                        move_cursor_right(&fields.run_as_user, cursor.run_as_user);
+                    cursor.run_as_user = move_cursor_right(&fields.run_as_user, cursor.run_as_user);
                 }
             },
             ModalState::NewAgent {
@@ -1804,7 +1868,11 @@ impl AppState {
         })
     }
 
-    fn update_agent_from_fields(agent: &mut Agent, repository: &Repository, fields: &AgentFormFields) {
+    fn update_agent_from_fields(
+        agent: &mut Agent,
+        repository: &Repository,
+        fields: &AgentFormFields,
+    ) {
         agent.name.clone_from(&fields.name);
         agent.shortcut_slot = fields.shortcut_slot;
         agent.description.clone_from(&fields.description);

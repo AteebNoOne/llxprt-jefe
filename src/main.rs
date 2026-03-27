@@ -198,6 +198,7 @@ struct AppProps {
 
 /// Root application component that manages state and renders the UI.
 #[component]
+#[allow(clippy::cognitive_complexity)]
 fn App(mut hooks: Hooks, props: &AppProps) -> impl Into<AnyElement<'static>> {
     let should_quit = hooks.use_state(|| false);
     let mut app_state = hooks.use_state(AppState::default);
@@ -237,6 +238,7 @@ fn App(mut hooks: Hooks, props: &AppProps) -> impl Into<AnyElement<'static>> {
                 state.agents = persisted.agents;
                 state.selected_repository_index = persisted.selected_repository_index;
                 state.selected_agent_index = persisted.selected_agent_index;
+                state.hide_idle_repositories = persisted.hide_idle_repositories;
                 state.last_selected_agent_by_repo = persisted.last_selected_agent_by_repo;
                 state.terminal_focused = false;
                 state.rebuild_repository_agent_ids();
@@ -248,28 +250,33 @@ fn App(mut hooks: Hooks, props: &AppProps) -> impl Into<AnyElement<'static>> {
                     .iter()
                     .filter(|agent| agent.status == AgentStatus::Running)
                     .filter_map(|agent| {
-                        state.repository_by_id(&agent.repository_id).map(|repository| {
-                            (
-                                agent.id.clone(),
-                                LaunchSignature {
-                                    work_dir: agent.work_dir.clone(),
-                                    profile: agent.profile.clone(),
-                                    mode_flags: agent.mode_flags.clone(),
-                                    llxprt_debug: agent.llxprt_debug.clone(),
-                                    pass_continue: agent.pass_continue,
-                                    sandbox_enabled: agent.sandbox_enabled,
-                                    sandbox_engine: agent.sandbox_engine,
-                                    sandbox_flags: agent.sandbox_flags.clone(),
-                                    remote: repository.remote.clone(),
-                                },
-                            )
-                        })
+                        state
+                            .repository_by_id(&agent.repository_id)
+                            .map(|repository| {
+                                (
+                                    agent.id.clone(),
+                                    LaunchSignature {
+                                        work_dir: agent.work_dir.clone(),
+                                        profile: agent.profile.clone(),
+                                        mode_flags: agent.mode_flags.clone(),
+                                        llxprt_debug: agent.llxprt_debug.clone(),
+                                        pass_continue: agent.pass_continue,
+                                        sandbox_enabled: agent.sandbox_enabled,
+                                        sandbox_engine: agent.sandbox_engine,
+                                        sandbox_flags: agent.sandbox_flags.clone(),
+                                        remote: repository.remote.clone(),
+                                    },
+                                )
+                            })
                     })
                     .collect();
 
                 let mut dead_ids = Vec::new();
                 for (agent_id, signature) in running_agents {
-                    if !ctx_guard.runtime.session_exists_for_signature(&agent_id, &signature) {
+                    if !ctx_guard
+                        .runtime
+                        .session_exists_for_signature(&agent_id, &signature)
+                    {
                         dead_ids.push(agent_id);
                     }
                 }
@@ -342,7 +349,10 @@ fn App(mut hooks: Hooks, props: &AppProps) -> impl Into<AnyElement<'static>> {
                         remote: repository.remote.clone(),
                     };
 
-                    if !ctx_guard.runtime.session_exists_for_signature(&agent.id, &signature) {
+                    if !ctx_guard
+                        .runtime
+                        .session_exists_for_signature(&agent.id, &signature)
+                    {
                         newly_dead.push(agent.id.clone());
                         continue;
                     }
@@ -368,12 +378,18 @@ fn App(mut hooks: Hooks, props: &AppProps) -> impl Into<AnyElement<'static>> {
 
                 drop(ctx_guard);
 
-                if !revived_running.is_empty() || !newly_dead.is_empty() || runtime_warning.is_some() {
+                if !revived_running.is_empty()
+                    || !newly_dead.is_empty()
+                    || runtime_warning.is_some()
+                {
                     let mut state = app_state.write();
                     for agent_id in revived_running {
-                        *state = std::mem::take(&mut *state)
-                            .apply(AppEvent::AgentStatusChanged(agent_id.clone(), AgentStatus::Running));
-                        if let Some(agent) = state.agents.iter().find(|agent| agent.id == agent_id) {
+                        *state = std::mem::take(&mut *state).apply(AppEvent::AgentStatusChanged(
+                            agent_id.clone(),
+                            AgentStatus::Running,
+                        ));
+                        if let Some(agent) = state.agents.iter().find(|agent| agent.id == agent_id)
+                        {
                             let signature = LaunchSignature {
                                 work_dir: agent.work_dir.clone(),
                                 profile: agent.profile.clone(),
@@ -402,9 +418,13 @@ fn App(mut hooks: Hooks, props: &AppProps) -> impl Into<AnyElement<'static>> {
                         }
                     }
                     for agent_id in newly_dead {
-                        *state = std::mem::take(&mut *state)
-                            .apply(AppEvent::AgentStatusChanged(agent_id.clone(), AgentStatus::Dead));
-                        if let Some(agent) = state.agents.iter_mut().find(|agent| agent.id == agent_id) {
+                        *state = std::mem::take(&mut *state).apply(AppEvent::AgentStatusChanged(
+                            agent_id.clone(),
+                            AgentStatus::Dead,
+                        ));
+                        if let Some(agent) =
+                            state.agents.iter_mut().find(|agent| agent.id == agent_id)
+                        {
                             agent.runtime_binding = None;
                         }
                     }
@@ -488,7 +508,9 @@ fn App(mut hooks: Hooks, props: &AppProps) -> impl Into<AnyElement<'static>> {
                             agent_id.clone(),
                             AgentStatus::Dead,
                         ));
-                        if let Some(agent) = state.agents.iter_mut().find(|agent| &agent.id == agent_id) {
+                        if let Some(agent) =
+                            state.agents.iter_mut().find(|agent| &agent.id == agent_id)
+                        {
                             agent.runtime_binding = None;
                         }
                     }
@@ -513,6 +535,7 @@ fn App(mut hooks: Hooks, props: &AppProps) -> impl Into<AnyElement<'static>> {
         let mut should_quit = should_quit;
         let mut help_scroll = help_scroll;
 
+        #[allow(clippy::cognitive_complexity)]
         move |event| {
             match event {
                 TerminalEvent::Resize(cols, rows) => {
@@ -967,12 +990,9 @@ fn App(mut hooks: Hooks, props: &AppProps) -> impl Into<AnyElement<'static>> {
                 false,
             ))
         }
-        ModalState::PreflightPrompt { issue, .. } => Some((
-            issue.prompt_title(),
-            issue.prompt_message(),
-            false,
-            false,
-        )),
+        ModalState::PreflightPrompt { issue, .. } => {
+            Some((issue.prompt_title(), issue.prompt_message(), false, false))
+        }
         _ => None,
     };
 
@@ -1338,9 +1358,7 @@ mod key_tests {
 #[cfg(test)]
 mod remote_agent_tests {
     use super::delete_selected_agent;
-    use jefe::domain::{
-        Agent, AgentId, RemoteRepositorySettings, Repository, RepositoryId,
-    };
+    use jefe::domain::{Agent, AgentId, RemoteRepositorySettings, Repository, RepositoryId};
     use jefe::state::AppState;
     use std::path::PathBuf;
 
@@ -1388,4 +1406,3 @@ mod remote_agent_tests {
         assert_eq!(state.selected_agent_index, None);
     }
 }
-

@@ -44,8 +44,15 @@ pub fn SplitScreen(props: &SplitScreenProps) -> impl Into<AnyElement<'static>> {
     let repo_count = state.map_or(0, |s| s.repositories.len());
     let running_count = state.map_or(0, |s| s.agents.iter().filter(|a| a.is_running()).count());
     let agent_count = state.map_or(0, |s| s.agents.len());
-    let repositories = state.map_or_else(Vec::new, |s| s.repositories.clone());
-    let selected_repo_idx = state.and_then(|s| s.selected_repository_index).unwrap_or(0);
+    let repositories = state.map_or_else(Vec::new, |s| {
+        s.visible_repository_indices()
+            .iter()
+            .filter_map(|idx| s.repositories.get(*idx).cloned())
+            .collect()
+    });
+    let selected_repo_idx = state
+        .and_then(AppState::selected_repository_visible_index)
+        .unwrap_or(0);
     // @plan PLAN-20260216-FIRSTVERSION-V1.P11
     let search_query = state
         .and_then(|s| {

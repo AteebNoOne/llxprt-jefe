@@ -17,7 +17,6 @@ use super::preflight::sandbox_ssh_agent_warning;
 
 const REMOTE_SSH_COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
 
-
 /// Build a local tmux `Command` that skips user config (`-f /dev/null`).
 ///
 /// Jefe sets all tmux options programmatically, so loading `~/.tmux.conf` is
@@ -70,16 +69,11 @@ fn apply_session_style(session_name: &str) {
 }
 
 pub fn enforce_clipboard_passthrough(session_name: &str) {
-    let _ = tmux_cmd_status(
-        ["set-option", "-g", "set-clipboard", "on"].as_ref(),
-        None,
-    );
+    const PANE_FORMAT: &str = "#{session_name}:#{window_index}.#{pane_index}";
+
+    let _ = tmux_cmd_status(["set-option", "-g", "set-clipboard", "on"].as_ref(), None);
     let _ = tmux_cmd_status(
         ["set-option", "-gp", "allow-passthrough", "on"].as_ref(),
-        None,
-    );
-    let _ = tmux_cmd_status(
-        ["set-option", "-t", session_name, "set-clipboard", "on"].as_ref(),
         None,
     );
     let _ = tmux_cmd_status(
@@ -96,7 +90,7 @@ pub fn enforce_clipboard_passthrough(session_name: &str) {
     );
 
     if let Ok(output) = tmux_command()
-        .args(["list-panes", "-t", session_name, "-F", "#{session_name}:#{window_index}.#{pane_index}"])
+        .args(["list-panes", "-t", session_name, "-F", PANE_FORMAT])
         .output()
         && output.status.success()
     {
@@ -110,8 +104,8 @@ pub fn enforce_clipboard_passthrough(session_name: &str) {
     }
 }
 
-pub(crate) fn shell_escape_single(value: &str) -> String {
-    format!("'{}'", value.replace('\'', r#"'\''"#))
+pub fn shell_escape_single(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
 }
 
 fn shell_join(parts: &[String]) -> String {
@@ -164,13 +158,18 @@ fn run_command_capture(mut cmd: Command, error_context: &str) -> Result<Output, 
             Err(e) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(RuntimeError::RemoteExecutionFailed(format!("{error_context}: {e}")));
+                return Err(RuntimeError::RemoteExecutionFailed(format!(
+                    "{error_context}: {e}"
+                )));
             }
         }
     }
 }
 
-fn remote_ssh_args(remote: &crate::domain::RemoteRepositorySettings, remote_command: &str) -> Vec<String> {
+fn remote_ssh_args(
+    remote: &crate::domain::RemoteRepositorySettings,
+    remote_command: &str,
+) -> Vec<String> {
     vec![
         "-o".to_owned(),
         "BatchMode=yes".to_owned(),
@@ -182,7 +181,7 @@ fn remote_ssh_args(remote: &crate::domain::RemoteRepositorySettings, remote_comm
     ]
 }
 
-pub(crate) fn remote_tmux_command(
+pub fn remote_tmux_command(
     remote: &crate::domain::RemoteRepositorySettings,
     inner_command: &str,
 ) -> String {
@@ -218,19 +217,22 @@ fn remote_kill_session_command(
     )
 }
 
-pub(crate) fn build_remote_attach_command(
+pub fn build_remote_attach_command(
     remote: &crate::domain::RemoteRepositorySettings,
     session_name: &str,
 ) -> String {
     let remote_command = remote_tmux_command(
         remote,
-        &format!("tmux attach-session -t {}", shell_escape_single(session_name)),
+        &format!(
+            "tmux attach-session -t {}",
+            shell_escape_single(session_name)
+        ),
     );
     let ssh_args = remote_ssh_args(remote, &remote_command);
     format!("exec ssh {}", shell_join(&ssh_args))
 }
 
-pub(crate) fn run_remote_ssh(
+pub fn run_remote_ssh(
     remote: &crate::domain::RemoteRepositorySettings,
     remote_command: &str,
 ) -> Result<Output, RuntimeError> {
@@ -239,11 +241,7 @@ pub(crate) fn run_remote_ssh(
     cmd.args(&ssh_args);
     run_command_capture(
         cmd,
-        &format!(
-            "ssh {}@{}",
-            remote.login_user.trim(),
-            remote.host.trim()
-        ),
+        &format!("ssh {}@{}", remote.login_user.trim(), remote.host.trim()),
     )
 }
 
@@ -313,7 +311,9 @@ fn resolve_remote_llxprt_command(
 
         let retry_output = run_remote_ssh(remote, &resolver_command)?;
         if retry_output.status.success() {
-            let resolved = String::from_utf8_lossy(&retry_output.stdout).trim().to_owned();
+            let resolved = String::from_utf8_lossy(&retry_output.stdout)
+                .trim()
+                .to_owned();
             if !resolved.is_empty() {
                 return Ok(resolved);
             }
@@ -325,6 +325,7 @@ fn resolve_remote_llxprt_command(
     ))
 }
 
+#[allow(clippy::too_many_lines)]
 fn build_remote_launch_command(
     session_name: &str,
     work_dir: &Path,
@@ -366,7 +367,6 @@ fn build_remote_launch_command(
                 shell_escape_single(&image_ref.to_string_lossy())
             ));
         }
-
     }
     if !signature.llxprt_debug.is_empty() {
         env_exports.push(format!(
@@ -380,7 +380,11 @@ fn build_remote_launch_command(
     } else if launch_args.is_empty() {
         llxprt_command
     } else {
-        format!("{} {}", shell_escape_single(&llxprt_command), shell_join(&launch_args))
+        format!(
+            "{} {}",
+            shell_escape_single(&llxprt_command),
+            shell_join(&launch_args)
+        )
     };
 
     let env_prefix = env_exports.join(" ");
@@ -395,14 +399,13 @@ fn build_remote_launch_command(
     Ok(remote_tmux_command(remote, &tmux_script))
 }
 
-
 /// Create a new detached tmux session running llxprt.
 ///
 /// The session runs `llxprt` directly (not a shell), so when llxprt exits,
 /// the tmux session becomes "dead" until explicit relaunch.
 ///
 /// @pseudocode component-002 lines 01-06
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
 pub fn create_session(
     session_name: &str,
     work_dir: &Path,
@@ -445,8 +448,7 @@ pub fn create_session(
         // Sandbox launch parity with llxprt-code: explicit --sandbox and engine,
         // plus SANDBOX_FLAGS environment support.
         let mut launch_env: Vec<(String, String)> = Vec::new();
-        let mut launch_warning: Option<String> = None;
-        if signature.sandbox_enabled {
+        let launch_warning: Option<String> = if signature.sandbox_enabled {
             llxprt_args.push("--sandbox".to_owned());
             llxprt_args.push("--sandbox-engine".to_owned());
             llxprt_args.push(signature.sandbox_engine.as_llxprt_arg().to_owned());
@@ -464,9 +466,10 @@ pub fn create_session(
                 ));
             }
 
-
-            launch_warning = sandbox_ssh_agent_warning();
-        }
+            sandbox_ssh_agent_warning()
+        } else {
+            None
+        };
 
         if !signature.llxprt_debug.is_empty() {
             launch_env.push(("LLXPRT_DEBUG".to_owned(), signature.llxprt_debug.clone()));
@@ -589,7 +592,7 @@ pub fn capture_pane_lines(session_name: &str) -> Option<Vec<String>> {
     }
 
     let text = String::from_utf8_lossy(&output.stdout);
-    Some(text.lines().map(|line| line.to_owned()).collect())
+    Some(text.lines().map(std::borrow::ToOwned::to_owned).collect())
 }
 
 /// Kill a tmux session.
@@ -620,7 +623,6 @@ pub fn kill_remote_session(
     ensure_remote_success(remote, "remote tmux kill-session", output)?;
     Ok(())
 }
-
 
 /// Send keys to a tmux session (for testing/automation).
 #[allow(dead_code)]
@@ -743,7 +745,6 @@ mod tests {
         assert!(tmux_script.contains("set-option -t 'jefe-agent-test' remain-on-exit on"));
     }
 
-
     #[test]
     fn sandbox_flags_env_value_is_raw_for_tmux_argv() {
         let key = "SANDBOX_FLAGS";
@@ -758,5 +759,4 @@ mod tests {
             "SANDBOX_FLAGS=--cpus=2 --memory=12288m --pids-limit=256"
         );
     }
-
 }

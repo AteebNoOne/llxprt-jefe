@@ -98,6 +98,7 @@ pub fn to_persisted_state(state: &AppState) -> PersistedState {
         agents: state.agents.clone(),
         selected_repository_index: state.selected_repository_index,
         selected_agent_index: state.selected_agent_index,
+        hide_idle_repositories: state.hide_idle_repositories,
         last_selected_agent_by_repo: state.last_selected_agent_by_repo.clone(),
     }
 }
@@ -119,7 +120,10 @@ fn clear_runtime_warning(state: &mut AppState) {
     }
 }
 
-fn launch_signature_for_agent(agent: &jefe::domain::Agent, repository: &Repository) -> LaunchSignature {
+fn launch_signature_for_agent(
+    agent: &jefe::domain::Agent,
+    repository: &Repository,
+) -> LaunchSignature {
     LaunchSignature {
         work_dir: agent.work_dir.clone(),
         profile: agent.profile.clone(),
@@ -133,8 +137,15 @@ fn launch_signature_for_agent(agent: &jefe::domain::Agent, repository: &Reposito
     }
 }
 
-fn agent_and_signature(state: &AppState, agent_id: &AgentId) -> Option<(jefe::domain::Agent, LaunchSignature)> {
-    let agent = state.agents.iter().find(|agent| &agent.id == agent_id)?.clone();
+fn agent_and_signature(
+    state: &AppState,
+    agent_id: &AgentId,
+) -> Option<(jefe::domain::Agent, LaunchSignature)> {
+    let agent = state
+        .agents
+        .iter()
+        .find(|agent| &agent.id == agent_id)?
+        .clone();
     let repository = state.repository_by_id(&agent.repository_id)?;
     let signature = launch_signature_for_agent(&agent, repository);
     Some((agent, signature))
@@ -180,7 +191,6 @@ fn mark_runtime_session_dead_if_present(state: &mut AppState, agent_id: &AgentId
         }
     }
 }
-
 
 fn apply_and_persist(app_state: &mut AppStateHandle, ctx: &SharedContext, evt: AppEvent) {
     let mut state = app_state.write();
@@ -234,9 +244,13 @@ fn execute_agent_launch(
     let attach_result = if let Some(ctx_arc) = ctx {
         if let Ok(mut ctx_guard) = ctx_arc.lock() {
             let spawn_result = if is_relaunch {
-                ctx_guard.runtime.spawn_session_fresh(agent_id, work_dir, signature)
+                ctx_guard
+                    .runtime
+                    .spawn_session_fresh(agent_id, work_dir, signature)
             } else {
-                ctx_guard.runtime.spawn_session(agent_id, work_dir, signature)
+                ctx_guard
+                    .runtime
+                    .spawn_session(agent_id, work_dir, signature)
             };
             match spawn_result {
                 Ok(()) => {
@@ -286,8 +300,6 @@ fn execute_agent_launch(
         persist_state_snapshot(ctx, &state);
     }
 }
-
-
 
 pub fn handle_mode_help_key(
     app_state: &mut AppStateHandle,
@@ -343,7 +355,7 @@ pub fn handle_mode_search_key(
     }
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
 pub fn dispatch_app_event(app_state: &mut AppStateHandle, ctx: &SharedContext, evt: AppEvent) {
     debug!(event = ?evt, "dispatching app event");
 
@@ -654,12 +666,7 @@ pub fn handle_mode_confirm_key(
                                     persist_state_snapshot(ctx, &state);
                                 }
                                 execute_agent_launch(
-                                    app_state,
-                                    ctx,
-                                    &agent_id,
-                                    &work_dir,
-                                    &signature,
-                                    false,
+                                    app_state, ctx, &agent_id, &work_dir, &signature, false,
                                 );
                             }
                         }
@@ -708,7 +715,8 @@ pub fn handle_mode_form_key(
                     let repository = state.repository_by_id(&agent.repository_id).cloned();
                     let Some(repository) = repository else {
                         state.terminal_focused = false;
-                        state.error_message = Some("selected agent repository not found".to_owned());
+                        state.error_message =
+                            Some("selected agent repository not found".to_owned());
                         persist_state_snapshot(ctx, &state);
                         return true;
                     };
@@ -729,14 +737,7 @@ pub fn handle_mode_form_key(
                         persist_state_snapshot(ctx, &state);
                     }
 
-                    execute_agent_launch(
-                        app_state,
-                        ctx,
-                        &agent_id,
-                        &work_dir,
-                        &signature,
-                        false,
-                    );
+                    execute_agent_launch(app_state, ctx, &agent_id, &work_dir, &signature, false);
                 }
             }
 
@@ -760,7 +761,9 @@ pub fn handle_mode_form_key(
                 let state = app_state.read();
                 match &state.modal {
                     ModalState::NewRepository { focus, .. }
-                    | ModalState::EditRepository { focus, .. } => FocusedFormField::Repository(*focus),
+                    | ModalState::EditRepository { focus, .. } => {
+                        FocusedFormField::Repository(*focus)
+                    }
                     ModalState::NewAgent { focus, .. } | ModalState::EditAgent { focus, .. } => {
                         FocusedFormField::Agent(*focus)
                     }
@@ -851,7 +854,7 @@ pub fn handle_global_shortcut_key(
     false
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
 pub fn handle_normal_key_event(
     app_state: &mut AppStateHandle,
     should_quit: &mut QuitHandle,
@@ -862,8 +865,8 @@ pub fn handle_normal_key_event(
     let state_ro = app_state.read();
     let pane_focus = state_ro.pane_focus;
     let selected_repo_id = state_ro
-        .selected_repository_index
-        .and_then(|i| state_ro.repositories.get(i).map(|r| r.id.clone()));
+        .selected_repository()
+        .map(|repository| repository.id.clone());
     let selected_agent_id = state_ro.selected_agent().map(|agent| agent.id.clone());
     drop(state_ro);
 
@@ -887,20 +890,24 @@ pub fn handle_normal_key_event(
                 selected_repo_id = ?selected_repo_id,
                 "n pressed: deriving new agent/repo action"
             );
-            // If no repo is selected but repos exist, auto-select the first one.
+            // If no repo is selected but repos exist, auto-select the first visible one.
             let repo_id = selected_repo_id.clone().or_else(|| {
                 let state = app_state.read();
-                if state.repositories.is_empty() {
-                    None
-                } else {
-                    let first_id = state.repositories[0].id.clone();
-                    drop(state);
+                let first_visible_idx = state.visible_repository_indices().first().copied();
+                let first_id = first_visible_idx.and_then(|idx| {
+                    state
+                        .repositories
+                        .get(idx)
+                        .map(|repository| repository.id.clone())
+                });
+                drop(state);
+                if let Some(first_visible_idx) = first_visible_idx {
                     let mut state_mut = app_state.write();
-                    state_mut.selected_repository_index = Some(0);
+                    state_mut.selected_repository_index = Some(first_visible_idx);
                     state_mut.normalize_selection_indices();
                     persist_state_snapshot(ctx, &state_mut);
-                    Some(first_id)
                 }
+                first_id
             });
             if repo_id.is_none() {
                 debug!("n: no repos → OpenNewRepository");
@@ -948,6 +955,11 @@ pub fn handle_normal_key_event(
         // Help and search
         KeyCode::Char('?' | 'h' | 'H') | KeyCode::F(1) => Some(AppEvent::OpenHelp),
         KeyCode::Char('/') => Some(AppEvent::OpenSearch),
+
+        // Repository visibility filter
+        KeyCode::Char('v' | 'V') if screen_mode == ScreenMode::Dashboard => {
+            Some(AppEvent::ToggleHideIdleRepositories)
+        }
 
         // Direct pane focus
         KeyCode::Char('r' | 'R') => {

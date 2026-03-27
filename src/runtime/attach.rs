@@ -78,8 +78,6 @@ fn copy_to_system_clipboard(text: &str) {
         if let Err(error) = child.wait() {
             warn!(%error, "failed waiting for pbcopy to complete");
         }
-
-        return;
     }
 
     #[cfg(target_os = "linux")]
@@ -88,13 +86,12 @@ fn copy_to_system_clipboard(text: &str) {
             ("xclip", ["-selection", "clipboard"].as_slice()),
             ("xsel", ["--clipboard", "--input"].as_slice()),
         ] {
-            let mut child = match Command::new(cmd)
+            let Ok(mut child) = Command::new(cmd)
                 .args(args)
                 .stdin(std::process::Stdio::piped())
                 .spawn()
-            {
-                Ok(child) => child,
-                Err(_) => continue,
+            else {
+                continue;
             };
 
             if let Some(stdin) = child.stdin.as_mut()
@@ -114,15 +111,9 @@ fn copy_to_system_clipboard(text: &str) {
 
 impl EventListener for RuntimeListener {
     fn send_event(&self, event: TermEvent) {
-        match event {
-            TermEvent::ClipboardStore(_, text) => {
-                debug!(len = text.len(), "received OSC52 ClipboardStore event");
-                copy_to_system_clipboard(&text);
-            }
-            TermEvent::ClipboardLoad(_, _) => {
-                // Paste-request events are currently routed via host paste events.
-            }
-            _ => {}
+        if let TermEvent::ClipboardStore(_, text) = event {
+            debug!(len = text.len(), "received OSC52 ClipboardStore event");
+            copy_to_system_clipboard(&text);
         }
     }
 }

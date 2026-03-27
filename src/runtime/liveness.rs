@@ -4,9 +4,10 @@
 //! @requirement REQ-TECH-004
 //! @pseudocode component-002 lines 33-35
 
-
 use crate::domain::RemoteRepositorySettings;
-use crate::runtime::commands::{remote_tmux_command, run_remote_ssh, shell_escape_single, tmux_command};
+use crate::runtime::commands::{
+    remote_tmux_command, run_remote_ssh, shell_escape_single, tmux_command,
+};
 
 /// Check if a tmux session exists and has at least one non-dead pane.
 ///
@@ -53,10 +54,7 @@ pub fn check_session_alive(session_name: &str) -> bool {
 
 /// Check if a remote tmux session exists and has at least one non-dead pane.
 #[must_use]
-pub fn check_remote_session_alive(
-    remote: &RemoteRepositorySettings,
-    session_name: &str,
-) -> bool {
+pub fn check_remote_session_alive(remote: &RemoteRepositorySettings, session_name: &str) -> bool {
     let command = remote_tmux_command(
         remote,
         &format!(
