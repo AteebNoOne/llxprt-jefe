@@ -68,7 +68,6 @@ jobs:
             fi
           done < <(
             find src tests -type f -name '*.rs' \
-              -not -path 'src/ui/components/*' \
               -not -path 'src/ui/modals/*' \
               -not -path 'src/ui/screens/*' \
               -not -path 'src/main.rs' \
