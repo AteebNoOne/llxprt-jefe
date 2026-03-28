@@ -1,4 +1,4 @@
-.PHONY: build ci-check quick-check
+.PHONY: build ci-check quick-check trim-cache
 
 build: ci-check
 
@@ -32,3 +32,8 @@ quick-check:
 	cargo fmt
 	cargo check -q
 	cargo test -q
+
+trim-cache:
+	rustup run stable cargo llvm-cov clean --workspace
+	rm -rf target/debug/incremental
+
