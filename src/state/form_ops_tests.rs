@@ -149,6 +149,82 @@ fn remote_repository_creation_preserves_remote_base_dir_without_local_expansion(
 }
 
 #[test]
+fn repository_name_that_normalizes_to_empty_slug_is_rejected() {
+    let fields = RepositoryFormFields {
+        name: "///".to_owned(),
+        base_dir: String::new(),
+        default_profile: String::new(),
+        remote_enabled: false,
+        login_user: String::new(),
+        host: String::new(),
+        run_as_user: String::new(),
+        setup_env_default: false,
+    };
+
+    assert!(AppState::create_repository_from_fields(&fields).is_none());
+}
+
+#[test]
+fn create_agent_rejects_whitespace_only_work_dir() {
+    let repository = seed_repository();
+    let fields = AgentFormFields {
+        shortcut_slot: None,
+        name: "Agent One".to_owned(),
+        description: String::new(),
+        work_dir: "   \t ".to_owned(),
+        profile: String::new(),
+        mode: "--yolo".to_owned(),
+        llxprt_debug: String::new(),
+        pass_continue: true,
+        sandbox_enabled: false,
+        sandbox_engine: "podman".to_owned(),
+        sandbox_flags: String::new(),
+    };
+
+    assert!(AppState::create_agent_from_fields(&repository, &fields, 1).is_none());
+}
+
+#[test]
+fn update_agent_ignores_whitespace_only_work_dir() {
+    let repository = seed_repository();
+    let mut agent = Agent {
+        id: crate::domain::AgentId("agent-1".to_owned()),
+        display_id: "#1".to_owned(),
+        repository_id: repository.id.clone(),
+        shortcut_slot: None,
+        name: "Agent One".to_owned(),
+        description: String::new(),
+        work_dir: std::path::PathBuf::from("/tmp/agent-one"),
+        profile: String::new(),
+        mode_flags: vec!["--yolo".to_owned()],
+        llxprt_debug: String::new(),
+        pass_continue: true,
+        sandbox_enabled: false,
+        sandbox_engine: crate::domain::SandboxEngine::Podman,
+        sandbox_flags: String::new(),
+        status: crate::domain::AgentStatus::Running,
+        runtime_binding: None,
+    };
+
+    let fields = AgentFormFields {
+        shortcut_slot: None,
+        name: "Agent One".to_owned(),
+        description: String::new(),
+        work_dir: "   ".to_owned(),
+        profile: String::new(),
+        mode: "--yolo".to_owned(),
+        llxprt_debug: String::new(),
+        pass_continue: true,
+        sandbox_enabled: false,
+        sandbox_engine: "podman".to_owned(),
+        sandbox_flags: String::new(),
+    };
+
+    AppState::update_agent_from_fields(&mut agent, &repository, &fields);
+    assert_eq!(agent.work_dir, std::path::PathBuf::from("/tmp/agent-one"));
+}
+
+#[test]
 fn repository_checkbox_toggle_updates_remote_fields() {
     let mut state = AppState {
         repositories: vec![seed_repository()],

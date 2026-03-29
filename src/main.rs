@@ -35,7 +35,7 @@ use jefe::ui::{ConfirmModal, Dashboard, HelpModal, NewAgentForm, NewRepositoryFo
 
 use pty_encoding::{
     key_to_bytes, mouse_event_to_bytes, should_arm_paste_enter_suppression,
-    should_suppress_synthetic_enter,
+    should_disarm_paste_enter_suppression, should_suppress_synthetic_enter,
 };
 
 /// Check if fullscreen mode is enabled.
@@ -469,6 +469,11 @@ fn App(mut hooks: Hooks, props: &AppProps) -> impl Into<AnyElement<'static>> {
                     };
                     if should_arm_paste_enter_suppression(&key_event, current_input_mode) {
                         suppress_next_enter.set(true);
+                    } else if should_disarm_paste_enter_suppression(
+                        suppress_next_enter.get(),
+                        &key_event,
+                    ) {
+                        suppress_next_enter.set(false);
                     }
 
                     if key_event.code == KeyCode::F(12) {

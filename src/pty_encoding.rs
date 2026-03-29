@@ -114,6 +114,10 @@ pub fn should_suppress_synthetic_enter(armed: bool, key_event: &KeyEvent) -> boo
     armed && key_event.code == KeyCode::Enter
 }
 
+pub fn should_disarm_paste_enter_suppression(armed: bool, key_event: &KeyEvent) -> bool {
+    armed && key_event.code != KeyCode::Enter
+}
+
 pub fn should_arm_paste_enter_suppression(key_event: &KeyEvent, input_mode: InputMode) -> bool {
     input_mode == InputMode::TerminalCapture
         && key_event
@@ -183,7 +187,7 @@ pub fn mouse_event_to_bytes(event: &iocraft::FullscreenMouseEvent) -> Option<Vec
 mod key_tests {
     use super::{
         ctrl_char_to_byte, key_to_bytes, should_arm_paste_enter_suppression,
-        should_suppress_synthetic_enter,
+        should_disarm_paste_enter_suppression, should_suppress_synthetic_enter,
     };
     use iocraft::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
     use jefe::input::InputMode;
@@ -211,6 +215,16 @@ mod key_tests {
         let enter = key_event(KeyCode::Enter, KeyModifiers::NONE);
         assert!(should_suppress_synthetic_enter(true, &enter));
         assert!(!should_suppress_synthetic_enter(false, &enter));
+    }
+
+    #[test]
+    fn non_enter_key_disarms_paste_suppression_when_armed() {
+        let key = key_event(KeyCode::Char('x'), KeyModifiers::NONE);
+        assert!(should_disarm_paste_enter_suppression(true, &key));
+        assert!(!should_disarm_paste_enter_suppression(false, &key));
+
+        let enter = key_event(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(!should_disarm_paste_enter_suppression(true, &enter));
     }
 
     #[test]

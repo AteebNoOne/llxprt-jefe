@@ -18,6 +18,27 @@ use super::util::{
 };
 
 impl AppState {
+    fn repository_slug_from_name(name: &str) -> String {
+        name.to_lowercase()
+            .replace(' ', "-")
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '-')
+            .collect::<String>()
+    }
+
+    fn validated_agent_work_dir(repository: &Repository, value: &str) -> Option<String> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        if repository.remote.enabled {
+            Some(trimmed.to_owned())
+        } else {
+            Some(expand_tilde(trimmed))
+        }
+    }
+
     fn handle_agent_shortcut_char(fields: &mut AgentFormFields, c: char) {
         if c == '0' {
             fields.shortcut_slot = None;
@@ -705,24 +726,23 @@ impl AppState {
     pub(super) fn create_repository_from_fields(
         fields: &RepositoryFormFields,
     ) -> Option<Repository> {
-        if fields.name.is_empty() {
+        let trimmed_name = fields.name.trim();
+        if trimmed_name.is_empty() {
             return None;
         }
 
-        let slug = fields
-            .name
-            .to_lowercase()
-            .replace(' ', "-")
-            .chars()
-            .filter(|c| c.is_alphanumeric() || *c == '-')
-            .collect::<String>();
+        let slug = Self::repository_slug_from_name(trimmed_name);
+        if slug.is_empty() {
+            return None;
+        }
 
-        let base_dir = if fields.base_dir.is_empty() {
+        let trimmed_base_dir = fields.base_dir.trim();
+        let base_dir = if trimmed_base_dir.is_empty() {
             format!("/tmp/{slug}")
         } else if fields.remote_enabled {
-            fields.base_dir.clone()
+            trimmed_base_dir.to_owned()
         } else {
-            expand_tilde(&fields.base_dir)
+            expand_tilde(trimmed_base_dir)
         };
 
         if !fields.remote_enabled {
@@ -737,7 +757,7 @@ impl AppState {
 
         Some(Repository {
             id: RepositoryId(generate_id("repo")),
-            name: fields.name.clone(),
+            name: trimmed_name.to_owned(),
             slug,
             base_dir: std::path::PathBuf::from(&base_dir),
             default_profile: normalize_profile(&fields.default_profile),
@@ -750,20 +770,21 @@ impl AppState {
         repo: &mut Repository,
         fields: &RepositoryFormFields,
     ) {
-        repo.name.clone_from(&fields.name);
-        repo.slug = fields
-            .name
-            .to_lowercase()
-            .replace(' ', "-")
-            .chars()
-            .filter(|c| c.is_alphanumeric() || *c == '-')
-            .collect();
+        let trimmed_name = fields.name.trim();
+        let slug = Self::repository_slug_from_name(trimmed_name);
+        if trimmed_name.is_empty() || slug.is_empty() {
+            return;
+        }
 
-        if !fields.base_dir.is_empty() {
+        trimmed_name.clone_into(&mut repo.name);
+        repo.slug = slug;
+
+        let trimmed_base_dir = fields.base_dir.trim();
+        if !trimmed_base_dir.is_empty() {
             repo.base_dir = if fields.remote_enabled {
-                std::path::PathBuf::from(&fields.base_dir)
+                std::path::PathBuf::from(trimmed_base_dir)
             } else {
-                std::path::PathBuf::from(expand_tilde(&fields.base_dir))
+                std::path::PathBuf::from(expand_tilde(trimmed_base_dir))
             };
         }
 
@@ -776,15 +797,12 @@ impl AppState {
         fields: &AgentFormFields,
         next_display_index: usize,
     ) -> Option<Agent> {
-        if fields.name.is_empty() {
+        let trimmed_name = fields.name.trim();
+        if trimmed_name.is_empty() {
             return None;
         }
 
-        let work_dir = if repository.remote.enabled {
-            fields.work_dir.clone()
-        } else {
-            expand_tilde(&fields.work_dir)
-        };
+        let work_dir = Self::validated_agent_work_dir(repository, &fields.work_dir)?;
         if !repository.remote.enabled {
             if let Err(e) = std::fs::create_dir_all(&work_dir) {
                 warn!(
@@ -809,7 +827,7 @@ impl AppState {
             display_id: format!("#{next_display_index}"),
             repository_id: repository.id.clone(),
             shortcut_slot: fields.shortcut_slot,
-            name: fields.name.clone(),
+            name: trimmed_name.to_owned(),
             description: fields.description.clone(),
             work_dir: std::path::PathBuf::from(&work_dir),
             profile: normalize_profile(&fields.profile),
@@ -829,16 +847,16 @@ impl AppState {
         repository: &Repository,
         fields: &AgentFormFields,
     ) {
-        agent.name.clone_from(&fields.name);
+        let trimmed_name = fields.name.trim();
+        if trimmed_name.is_empty() {
+            return;
+        }
+
+        trimmed_name.clone_into(&mut agent.name);
         agent.shortcut_slot = fields.shortcut_slot;
         agent.description.clone_from(&fields.description);
 
-        if !fields.work_dir.is_empty() {
-            let new_dir = if repository.remote.enabled {
-                fields.work_dir.clone()
-            } else {
-                expand_tilde(&fields.work_dir)
-            };
+        if let Some(new_dir) = Self::validated_agent_work_dir(repository, &fields.work_dir) {
             if !repository.remote.enabled && new_dir != agent.work_dir.to_string_lossy() {
                 if let Err(e) = std::fs::create_dir_all(&new_dir) {
                     warn!(
@@ -875,7 +893,10 @@ impl AppState {
                 }
             }
             ModalState::EditRepository { id, fields, .. } => {
-                if fields.name.is_empty() {
+                let trimmed_name = fields.name.trim();
+                if trimmed_name.is_empty()
+                    || Self::repository_slug_from_name(trimmed_name).is_empty()
+                {
                     return;
                 }
 
@@ -902,16 +923,19 @@ impl AppState {
                 }
             }
             ModalState::EditAgent { id, fields, .. } => {
-                if fields.name.is_empty() {
+                if fields.name.trim().is_empty() {
                     return;
                 }
 
                 self.enforce_shortcut_uniqueness(&id, fields.shortcut_slot);
                 let repository = self.repository_for_agent(&id).cloned();
-                if let Some(repository) = repository
-                    && let Some(agent) = self.agents.iter_mut().find(|a| a.id == id)
-                {
-                    Self::update_agent_from_fields(agent, &repository, &fields);
+                if let Some(repository) = repository {
+                    if Self::validated_agent_work_dir(&repository, &fields.work_dir).is_none() {
+                        return;
+                    }
+                    if let Some(agent) = self.agents.iter_mut().find(|a| a.id == id) {
+                        Self::update_agent_from_fields(agent, &repository, &fields);
+                    }
                 }
                 self.remember_selected_agent_for_current_repo();
                 self.modal = ModalState::None;

@@ -6,7 +6,7 @@ use tracing::warn;
 use jefe::domain::{Agent, AgentId, AgentStatus, LaunchSignature, RemoteRepositorySettings};
 use jefe::persistence::{PersistenceManager, Settings, State as PersistedState};
 use jefe::runtime::{RuntimeError, RuntimeManager, RuntimeSession};
-use jefe::state::{AppEvent, AppState};
+use jefe::state::AppState;
 use jefe::theme::ThemeManager;
 
 use crate::app_input::{SharedContext, persist_state_snapshot, to_persisted_state};
@@ -92,12 +92,17 @@ pub fn init_app_state(app_state: &mut HookState<AppState>, ctx: &SharedContext) 
         None
     } else {
         for agent_id in dead_ids {
-            *state = std::mem::take(&mut *state)
-                .apply(AppEvent::AgentStatusChanged(agent_id, AgentStatus::Dead));
+            if let Some(agent) = state.agents.iter_mut().find(|agent| agent.id == agent_id) {
+                agent.status = AgentStatus::Dead;
+            }
         }
+        state.rebuild_repository_agent_ids();
+        state.normalize_selection_indices();
         Some(to_persisted_state(&state))
     };
 
+    // Release state/context guards before reacquiring a mutable context lock
+    // for persistence writes and theme activation.
     drop(state);
     drop(ctx_guard);
     if let Ok(mut ctx_mut) = ctx_arc.lock() {
