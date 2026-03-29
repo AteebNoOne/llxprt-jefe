@@ -124,7 +124,7 @@ pub fn restore_runtime_sessions(app_state: &mut HookState<AppState>, ctx: &Share
         return;
     };
 
-    let mut revived_running = Vec::new();
+    let mut revived_running: Vec<(AgentId, LaunchSignature)> = Vec::new();
     let mut newly_dead = Vec::new();
     let mut runtime_warning: Option<String> = None;
 
@@ -161,12 +161,16 @@ pub fn restore_runtime_sessions(app_state: &mut HookState<AppState>, ctx: &Share
             continue;
         }
 
+        // This call intentionally runs even after session_exists_for_signature:
+        // spawn_session is the registration path into the runtime manager's
+        // in-memory map. AlreadyRunning means the session is already tracked.
+
         match ctx_guard
             .runtime
             .spawn_session(&agent.id, &agent.work_dir, &signature)
         {
             Ok(()) | Err(RuntimeError::AlreadyRunning(_)) => {
-                revived_running.push(agent.id.clone());
+                revived_running.push((agent.id.clone(), signature));
                 if runtime_warning.is_none() {
                     runtime_warning = jefe::runtime::sandbox_ssh_agent_warning();
                 }
@@ -185,46 +189,27 @@ pub fn restore_runtime_sessions(app_state: &mut HookState<AppState>, ctx: &Share
     }
 
     let mut state = app_state.write();
-    for agent_id in revived_running {
-        *state = std::mem::take(&mut *state).apply(AppEvent::AgentStatusChanged(
-            agent_id.clone(),
-            AgentStatus::Running,
-        ));
-        if let Some(agent) = state.agents.iter().find(|agent| agent.id == agent_id) {
-            let signature = LaunchSignature {
-                work_dir: agent.work_dir.clone(),
-                profile: agent.profile.clone(),
-                mode_flags: agent.mode_flags.clone(),
-                llxprt_debug: agent.llxprt_debug.clone(),
-                pass_continue: agent.pass_continue,
-                sandbox_enabled: agent.sandbox_enabled,
-                sandbox_engine: agent.sandbox_engine,
-                sandbox_flags: agent.sandbox_flags.clone(),
-                remote: state
-                    .repository_by_id(&agent.repository_id)
-                    .map(|repository| repository.remote.clone())
-                    .unwrap_or_default(),
-            };
+    for (agent_id, signature) in revived_running {
+        if let Some(agent) = state.agents.iter_mut().find(|agent| agent.id == agent_id) {
+            agent.status = AgentStatus::Running;
             let session_name = RuntimeSession::session_name_for(&agent_id);
-            if let Some(agent_mut) = state.agents.iter_mut().find(|agent| agent.id == agent_id) {
-                agent_mut.runtime_binding = Some(jefe::domain::RuntimeBinding {
-                    session_name,
-                    launch_signature: signature,
-                    attached: false,
-                    last_seen: None,
-                });
-            }
+            agent.runtime_binding = Some(jefe::domain::RuntimeBinding {
+                session_name,
+                launch_signature: signature,
+                attached: false,
+                last_seen: None,
+            });
         }
     }
     for agent_id in newly_dead {
-        *state = std::mem::take(&mut *state).apply(AppEvent::AgentStatusChanged(
-            agent_id.clone(),
-            AgentStatus::Dead,
-        ));
         if let Some(agent) = state.agents.iter_mut().find(|agent| agent.id == agent_id) {
+            agent.status = AgentStatus::Dead;
             agent.runtime_binding = None;
         }
     }
+
+    state.rebuild_repository_agent_ids();
+    state.normalize_selection_indices();
     if let Some(warning) = runtime_warning {
         state.warning_message = Some(warning);
     }

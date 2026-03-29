@@ -147,9 +147,6 @@ pub fn mouse_event_to_bytes(event: &iocraft::FullscreenMouseEvent) -> Option<Vec
     };
 
     let mut cb_with_mods = cb;
-    if event.modifiers.contains(iocraft::KeyModifiers::SHIFT) {
-        cb_with_mods += 4;
-    }
     if event.modifiers.contains(iocraft::KeyModifiers::ALT) {
         cb_with_mods += 8;
     }

@@ -17,6 +17,90 @@ use super::util::{
 };
 
 impl AppState {
+    fn handle_agent_shortcut_char(fields: &mut AgentFormFields, c: char) {
+        if c == '0' {
+            fields.shortcut_slot = None;
+        } else if let Some(digit) = c.to_digit(10)
+            && (1..=9).contains(&digit)
+        {
+            fields.shortcut_slot = u8::try_from(digit).ok();
+        }
+    }
+
+    fn handle_agent_toggle_char(fields: &mut AgentFormFields, focus: AgentFormFocus, c: char) {
+        if c != ' ' && c != 'x' && c != 'X' {
+            return;
+        }
+
+        match focus {
+            AgentFormFocus::PassContinue => {
+                fields.pass_continue = !fields.pass_continue;
+            }
+            AgentFormFocus::Sandbox => {
+                fields.sandbox_enabled = !fields.sandbox_enabled;
+            }
+            AgentFormFocus::SandboxEngine => {
+                let current =
+                    SandboxEngine::from_form_value(&fields.sandbox_engine).unwrap_or_default();
+                current
+                    .next()
+                    .label()
+                    .clone_into(&mut fields.sandbox_engine);
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_agent_field_char(
+        fields: &mut AgentFormFields,
+        cursor: &mut AgentFormCursor,
+        focus: AgentFormFocus,
+        c: char,
+    ) -> bool {
+        match focus {
+            AgentFormFocus::Shortcut => {
+                Self::handle_agent_shortcut_char(fields, c);
+                false
+            }
+            AgentFormFocus::Name => {
+                cursor.name = insert_char_at(&mut fields.name, cursor.name, c);
+                true
+            }
+            AgentFormFocus::Description => {
+                cursor.description = insert_char_at(&mut fields.description, cursor.description, c);
+                false
+            }
+            AgentFormFocus::WorkDir => {
+                cursor.work_dir = insert_char_at(&mut fields.work_dir, cursor.work_dir, c);
+                false
+            }
+            AgentFormFocus::Profile => {
+                cursor.profile = insert_char_at(&mut fields.profile, cursor.profile, c);
+                false
+            }
+            AgentFormFocus::Mode => {
+                cursor.mode = insert_char_at(&mut fields.mode, cursor.mode, c);
+                false
+            }
+            AgentFormFocus::LlxprtDebug => {
+                cursor.llxprt_debug =
+                    insert_char_at(&mut fields.llxprt_debug, cursor.llxprt_debug, c);
+                false
+            }
+            AgentFormFocus::PassContinue
+            | AgentFormFocus::Sandbox
+            | AgentFormFocus::SandboxEngine => {
+                Self::handle_agent_toggle_char(fields, focus, c);
+                false
+            }
+            AgentFormFocus::SandboxFlags => {
+                cursor.sandbox_flags =
+                    insert_char_at(&mut fields.sandbox_flags, cursor.sandbox_flags, c);
+                false
+            }
+        }
+    }
+
     #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     pub(super) fn handle_form_char(&mut self, c: char) {
         let mut refresh_work_dir = false;
@@ -70,125 +154,24 @@ impl AppState {
                 cursor,
                 work_dir_manual,
                 ..
-            } => match focus {
-                AgentFormFocus::Shortcut => {
-                    if c == '0' {
-                        fields.shortcut_slot = None;
-                    } else if let Some(digit) = c.to_digit(10)
-                        && (1..=9).contains(&digit)
-                    {
-                        fields.shortcut_slot = u8::try_from(digit).ok();
-                    }
-                }
-                AgentFormFocus::Name => {
-                    cursor.name = insert_char_at(&mut fields.name, cursor.name, c);
-                    if !*work_dir_manual {
-                        refresh_work_dir = true;
-                    }
-                }
-                AgentFormFocus::Description => {
-                    cursor.description =
-                        insert_char_at(&mut fields.description, cursor.description, c);
-                }
-                AgentFormFocus::WorkDir => {
-                    cursor.work_dir = insert_char_at(&mut fields.work_dir, cursor.work_dir, c);
+            } => {
+                if *focus == AgentFormFocus::WorkDir {
                     *work_dir_manual = true;
                 }
-                AgentFormFocus::Profile => {
-                    cursor.profile = insert_char_at(&mut fields.profile, cursor.profile, c);
+
+                let touched_name = Self::handle_agent_field_char(fields, cursor, *focus, c);
+                if touched_name && !*work_dir_manual {
+                    refresh_work_dir = true;
                 }
-                AgentFormFocus::Mode => {
-                    cursor.mode = insert_char_at(&mut fields.mode, cursor.mode, c);
-                }
-                AgentFormFocus::LlxprtDebug => {
-                    cursor.llxprt_debug =
-                        insert_char_at(&mut fields.llxprt_debug, cursor.llxprt_debug, c);
-                }
-                AgentFormFocus::PassContinue => {
-                    if c == ' ' || c == 'x' || c == 'X' {
-                        fields.pass_continue = !fields.pass_continue;
-                    }
-                }
-                AgentFormFocus::Sandbox => {
-                    if c == ' ' || c == 'x' || c == 'X' {
-                        fields.sandbox_enabled = !fields.sandbox_enabled;
-                    }
-                }
-                AgentFormFocus::SandboxEngine => {
-                    if c == ' ' || c == 'x' || c == 'X' {
-                        let current = SandboxEngine::from_form_value(&fields.sandbox_engine)
-                            .unwrap_or_default();
-                        current
-                            .next()
-                            .label()
-                            .clone_into(&mut fields.sandbox_engine);
-                    }
-                }
-                AgentFormFocus::SandboxFlags => {
-                    cursor.sandbox_flags =
-                        insert_char_at(&mut fields.sandbox_flags, cursor.sandbox_flags, c);
-                }
-            },
+            }
             ModalState::EditAgent {
                 fields,
                 focus,
                 cursor,
                 ..
-            } => match focus {
-                AgentFormFocus::Shortcut => {
-                    if c == '0' {
-                        fields.shortcut_slot = None;
-                    } else if let Some(digit) = c.to_digit(10)
-                        && (1..=9).contains(&digit)
-                    {
-                        fields.shortcut_slot = u8::try_from(digit).ok();
-                    }
-                }
-                AgentFormFocus::Name => {
-                    cursor.name = insert_char_at(&mut fields.name, cursor.name, c);
-                }
-                AgentFormFocus::Description => {
-                    cursor.description =
-                        insert_char_at(&mut fields.description, cursor.description, c);
-                }
-                AgentFormFocus::WorkDir => {
-                    cursor.work_dir = insert_char_at(&mut fields.work_dir, cursor.work_dir, c);
-                }
-                AgentFormFocus::Profile => {
-                    cursor.profile = insert_char_at(&mut fields.profile, cursor.profile, c);
-                }
-                AgentFormFocus::Mode => {
-                    cursor.mode = insert_char_at(&mut fields.mode, cursor.mode, c);
-                }
-                AgentFormFocus::LlxprtDebug => {
-                    cursor.llxprt_debug =
-                        insert_char_at(&mut fields.llxprt_debug, cursor.llxprt_debug, c);
-                }
-                AgentFormFocus::PassContinue => {
-                    if c == ' ' || c == 'x' || c == 'X' {
-                        fields.pass_continue = !fields.pass_continue;
-                    }
-                }
-                AgentFormFocus::Sandbox => {
-                    if c == ' ' || c == 'x' || c == 'X' {
-                        fields.sandbox_enabled = !fields.sandbox_enabled;
-                    }
-                }
-                AgentFormFocus::SandboxEngine => {
-                    if c == ' ' || c == 'x' || c == 'X' {
-                        let current = SandboxEngine::from_form_value(&fields.sandbox_engine)
-                            .unwrap_or_default();
-                        current
-                            .next()
-                            .label()
-                            .clone_into(&mut fields.sandbox_engine);
-                    }
-                }
-                AgentFormFocus::SandboxFlags => {
-                    cursor.sandbox_flags =
-                        insert_char_at(&mut fields.sandbox_flags, cursor.sandbox_flags, c);
-                }
-            },
+            } => {
+                let _ = Self::handle_agent_field_char(fields, cursor, *focus, c);
+            }
             _ => {}
         }
 

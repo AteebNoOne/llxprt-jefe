@@ -79,8 +79,22 @@ fn memory_value_to_mib(value: &str) -> Option<u64> {
     match unit {
         "" | "m" | "mb" => Some(numeric),
         "g" | "gb" => Some(numeric.saturating_mul(1024)),
-        "k" | "kb" => Some(numeric / 1024),
-        "b" => Some(numeric / (1024 * 1024)),
+        "k" | "kb" => {
+            let mib = numeric / 1024;
+            if mib == 0 && numeric > 0 {
+                None
+            } else {
+                Some(mib)
+            }
+        }
+        "b" => {
+            let mib = numeric / (1024 * 1024);
+            if mib == 0 && numeric > 0 {
+                None
+            } else {
+                Some(mib)
+            }
+        }
         _ => None,
     }
 }
@@ -168,6 +182,22 @@ mod tests {
         assert_eq!(
             normalize_sandbox_flags("   "),
             DEFAULT_SANDBOX_FLAGS.to_owned()
+        );
+    }
+
+    #[test]
+    fn normalize_sandbox_flags_preserves_sub_mib_kib_values() {
+        assert_eq!(
+            normalize_sandbox_flags("--cpus=2 --memory=512k --pids-limit=256"),
+            "--cpus=2 --memory=512k --pids-limit=256"
+        );
+    }
+
+    #[test]
+    fn normalize_sandbox_flags_preserves_sub_mib_byte_values() {
+        assert_eq!(
+            normalize_sandbox_flags("--cpus=2 --memory=500000b --pids-limit=256"),
+            "--cpus=2 --memory=500000b --pids-limit=256"
         );
     }
 }
