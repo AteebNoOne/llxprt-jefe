@@ -94,6 +94,7 @@ pub fn init_app_state(app_state: &mut HookState<AppState>, ctx: &SharedContext) 
         for agent_id in dead_ids {
             if let Some(agent) = state.agents.iter_mut().find(|agent| agent.id == agent_id) {
                 agent.status = AgentStatus::Dead;
+                agent.runtime_binding = None;
             }
         }
         state.rebuild_repository_agent_ids();
