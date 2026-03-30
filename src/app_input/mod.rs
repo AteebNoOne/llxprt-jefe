@@ -1,5 +1,11 @@
 use std::sync::Arc;
 
+mod normal;
+mod preflight;
+
+pub use normal::{handle_global_shortcut_key, handle_normal_key_event};
+use preflight::handle_preflight_prompt_enter;
+
 use iocraft::hooks::State as HookState;
 use iocraft::prelude::*;
 use tracing::{debug, warn};
@@ -23,10 +29,7 @@ use jefe::input::{SearchKeyRoute, route_search_key};
 use jefe::persistence::{PersistenceManager, State as PersistedState};
 const REMOTE_ATTACH_SETTLE_DELAY: Duration = Duration::from_millis(150);
 
-use jefe::runtime::{
-    RuntimeError, RuntimeManager, execute_preflight_action, sandbox_preflight,
-    sandbox_ssh_agent_warning,
-};
+use jefe::runtime::{RuntimeError, RuntimeManager, sandbox_preflight, sandbox_ssh_agent_warning};
 
 #[must_use]
 fn jump_to_shortcut_agent(app_state: &mut AppStateHandle, ctx: &SharedContext, slot: u8) -> bool {
@@ -74,10 +77,7 @@ fn jump_to_shortcut_agent(app_state: &mut AppStateHandle, ctx: &SharedContext, s
     }
 }
 
-use jefe::state::{
-    AgentFormFocus, AppEvent, AppState, ModalState, PaneFocus, RepositoryFormFocus, ScreenMode,
-};
-use jefe::theme::ThemeManager;
+use jefe::state::{AgentFormFocus, AppEvent, AppState, ModalState, PaneFocus, RepositoryFormFocus};
 
 fn repository_focus_toggles_checkbox(focus: RepositoryFormFocus) -> bool {
     matches!(
@@ -643,40 +643,7 @@ pub fn handle_mode_confirm_key(
                     issue,
                     ..
                 } => {
-                    let action = issue.action();
-                    match execute_preflight_action(&action) {
-                        Ok(()) => {
-                            // Re-run preflight to check for remaining issues.
-                            if let Some(next) = sandbox_preflight(signature.sandbox_engine) {
-                                let mut state = app_state.write();
-                                state.modal = ModalState::PreflightPrompt {
-                                    agent_id,
-                                    signature,
-                                    issue: next,
-                                    remaining_issues: Vec::new(),
-                                };
-                                persist_state_snapshot(ctx, &state);
-                            } else {
-                                // All clear — close modal and launch.
-                                let work_dir = signature.work_dir.clone();
-                                {
-                                    let mut state = app_state.write();
-                                    state.modal = ModalState::None;
-                                    state.terminal_focused = true;
-                                    persist_state_snapshot(ctx, &state);
-                                }
-                                execute_agent_launch(
-                                    app_state, ctx, &agent_id, &work_dir, &signature, false,
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            let mut state = app_state.write();
-                            state.modal = ModalState::None;
-                            state.error_message = Some(e);
-                            persist_state_snapshot(ctx, &state);
-                        }
-                    }
+                    handle_preflight_prompt_enter(app_state, ctx, agent_id, signature, issue);
                 }
                 _ => {}
             }
@@ -706,7 +673,6 @@ pub fn handle_mode_form_key(
             *state = std::mem::take(&mut *state).apply(AppEvent::SubmitForm);
             persist_state_snapshot(ctx, &state);
 
-            // If new agent was created, spawn session and attach viewer.
             // If new agent was created, spawn session and attach viewer.
             if is_new_agent && state.modal == ModalState::None {
                 if let Some(agent) = state.selected_agent().cloned() {
@@ -785,10 +751,7 @@ pub fn handle_mode_form_key(
                     if let ModalState::NewAgent { fields, .. }
                     | ModalState::EditAgent { fields, .. } = &mut state.modal
                     {
-                        let current = SandboxEngine::from_form_value(&fields.sandbox_engine)
-                            .unwrap_or_default();
-                        current
-                            .next()
+                        SandboxEngine::next_from_form_value(&fields.sandbox_engine)
                             .label()
                             .clone_into(&mut fields.sandbox_engine);
                     }
@@ -809,253 +772,170 @@ pub fn handle_mode_form_key(
     true
 }
 
-fn mac_alt_digit_slot(c: char) -> Option<u8> {
-    MAC_ALT_DIGIT_SHORTCUTS
-        .iter()
-        .find_map(|(symbol, slot)| (*symbol == c).then_some(*slot))
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
 
-fn try_extract_shortcut_slot(key_event: &KeyEvent) -> Option<u8> {
-    match key_event.code {
-        KeyCode::Char(c) => {
-            if key_event.modifiers.contains(KeyModifiers::ALT) {
-                if let Some(digit) = c.to_digit(10)
-                    && (1..=9).contains(&digit)
-                {
-                    return u8::try_from(digit).ok();
-                }
-            }
+    use jefe::domain::{
+        Agent, AgentId, AgentStatus, DEFAULT_SANDBOX_FLAGS, LaunchSignature,
+        RemoteRepositorySettings, RepositoryId, RuntimeBinding, SandboxEngine,
+    };
 
-            // macOS default Option+digit emits these symbols when Option is not in Meta mode.
-            if !key_event.modifiers.contains(KeyModifiers::CONTROL)
-                && !key_event.modifiers.contains(KeyModifiers::SUPER)
-                && !key_event.modifiers.contains(KeyModifiers::META)
-                && let Some(slot) = mac_alt_digit_slot(c)
-            {
-                return Some(slot);
-            }
-
-            None
+    fn sample_signature() -> LaunchSignature {
+        LaunchSignature {
+            work_dir: PathBuf::from("/tmp/agent"),
+            profile: String::new(),
+            mode_flags: vec![String::from("--yolo")],
+            llxprt_debug: String::new(),
+            pass_continue: true,
+            sandbox_enabled: false,
+            sandbox_engine: SandboxEngine::Podman,
+            sandbox_flags: DEFAULT_SANDBOX_FLAGS.to_owned(),
+            remote: RemoteRepositorySettings::default(),
         }
-        _ => None,
-    }
-}
-
-pub fn handle_global_shortcut_key(
-    app_state: &mut AppStateHandle,
-    ctx: &SharedContext,
-    key_event: &KeyEvent,
-) -> bool {
-    if let Some(slot) = try_extract_shortcut_slot(key_event) {
-        let _ = jump_to_shortcut_agent(app_state, ctx, slot);
-        return true;
     }
 
-    false
-}
+    fn sample_agent(agent_id: &AgentId) -> Agent {
+        Agent::new(
+            agent_id.clone(),
+            RepositoryId(String::from("repo-1")),
+            String::from("Agent One"),
+            PathBuf::from("/tmp/agent"),
+        )
+    }
 
-#[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
-pub fn handle_normal_key_event(
-    app_state: &mut AppStateHandle,
-    should_quit: &mut QuitHandle,
-    ctx: &SharedContext,
-    key_event: &KeyEvent,
-    screen_mode: ScreenMode,
-) -> Option<AppEvent> {
-    let state_ro = app_state.read();
-    let pane_focus = state_ro.pane_focus;
-    let selected_repo_id = state_ro
-        .selected_repository()
-        .map(|repository| repository.id.clone());
-    let selected_agent_id = state_ro.selected_agent().map(|agent| agent.id.clone());
-    drop(state_ro);
+    #[test]
+    fn repository_focus_toggles_checkbox_for_expected_fields() {
+        assert!(repository_focus_toggles_checkbox(
+            RepositoryFormFocus::RemoteEnabled
+        ));
+        assert!(repository_focus_toggles_checkbox(
+            RepositoryFormFocus::SetupEnvDefault
+        ));
+        assert!(!repository_focus_toggles_checkbox(
+            RepositoryFormFocus::Name
+        ));
+    }
 
-    match key_event.code {
-        // Quit
-        KeyCode::Char('q' | 'Q') => {
-            should_quit.set(true);
-            None
+    #[test]
+    fn clear_runtime_warning_clears_only_ssh_agent_warnings() {
+        let mut state = AppState {
+            warning_message: Some(String::from("SSH_AUTH_SOCK is missing")),
+            ..AppState::default()
+        };
+        clear_runtime_warning(&mut state);
+        assert!(state.warning_message.is_none());
+
+        state.warning_message = Some(String::from("regular warning"));
+        clear_runtime_warning(&mut state);
+        assert_eq!(state.warning_message, Some(String::from("regular warning")));
+    }
+
+    #[test]
+    fn set_agent_runtime_binding_sets_session_and_signature() {
+        let agent_id = AgentId(String::from("agent-1"));
+        let mut state = AppState::default();
+        state.agents.push(sample_agent(&agent_id));
+
+        let signature = sample_signature();
+        set_agent_runtime_binding(
+            &mut state,
+            &agent_id,
+            String::from("jefe-agent-1"),
+            signature.clone(),
+        );
+
+        let binding = state
+            .agents
+            .iter()
+            .find(|agent| agent.id == agent_id)
+            .and_then(|agent| agent.runtime_binding.as_ref());
+
+        assert!(binding.is_some());
+        if let Some(binding) = binding {
+            assert_eq!(binding.session_name, String::from("jefe-agent-1"));
+            assert_eq!(binding.launch_signature, signature);
+            assert!(!binding.attached);
         }
+    }
 
-        // Navigation
-        KeyCode::Up => Some(AppEvent::NavigateUp),
-        KeyCode::Down => Some(AppEvent::NavigateDown),
-        KeyCode::Left => Some(AppEvent::NavigateLeft),
-        KeyCode::Right => Some(AppEvent::NavigateRight),
-        KeyCode::Tab => Some(AppEvent::CyclePaneFocus),
+    #[test]
+    fn mark_and_clear_runtime_attachment_flags() {
+        let agent_a = AgentId(String::from("agent-a"));
+        let agent_b = AgentId(String::from("agent-b"));
 
-        // New (n = new agent, N = new repository)
-        KeyCode::Char('n') => {
-            debug!(
-                selected_repo_id = ?selected_repo_id,
-                "n pressed: deriving new agent/repo action"
-            );
-            // If no repo is selected but repos exist, auto-select the first visible one.
-            let repo_id = selected_repo_id.clone().or_else(|| {
-                let state = app_state.read();
-                let first_visible_idx = state.visible_repository_indices().first().copied();
-                let first_id = first_visible_idx.and_then(|idx| {
-                    state
-                        .repositories
-                        .get(idx)
-                        .map(|repository| repository.id.clone())
-                });
-                drop(state);
-                if let Some(first_visible_idx) = first_visible_idx {
-                    let mut state_mut = app_state.write();
-                    state_mut.selected_repository_index = Some(first_visible_idx);
-                    state_mut.normalize_selection_indices();
-                    persist_state_snapshot(ctx, &state_mut);
-                }
-                first_id
-            });
-            if repo_id.is_none() {
-                debug!("n: no repos → OpenNewRepository");
-                Some(AppEvent::OpenNewRepository)
-            } else {
-                debug!(repo_id = ?repo_id, "n: repo exists → OpenNewAgent");
-                repo_id.map(AppEvent::OpenNewAgent)
-            }
-        }
-        KeyCode::Char('N') => {
-            debug!("N pressed: OpenNewRepository");
-            Some(AppEvent::OpenNewRepository)
-        }
+        let mut first = sample_agent(&agent_a);
+        first.runtime_binding = Some(RuntimeBinding {
+            session_name: String::from("sess-a"),
+            launch_signature: sample_signature(),
+            attached: false,
+            last_seen: None,
+        });
 
-        // Delete
-        KeyCode::Char('d' | 'D') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-            if pane_focus == PaneFocus::Agents || pane_focus == PaneFocus::Terminal {
-                selected_agent_id.clone().map(AppEvent::OpenDeleteAgent)
-            } else if pane_focus == PaneFocus::Repositories {
-                selected_repo_id.clone().map(AppEvent::OpenDeleteRepository)
-            } else {
-                None
-            }
-        }
+        let mut second = sample_agent(&agent_b);
+        second.runtime_binding = Some(RuntimeBinding {
+            session_name: String::from("sess-b"),
+            launch_signature: sample_signature(),
+            attached: true,
+            last_seen: None,
+        });
 
-        // Kill agent
-        KeyCode::Char('k' | 'K') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-            selected_agent_id.clone().map(AppEvent::KillAgent)
-        }
+        let mut state = AppState::default();
+        state.agents.push(first);
+        state.agents.push(second);
 
-        // Relaunch agent
-        KeyCode::Char('l' | 'L') => selected_agent_id.clone().map(AppEvent::RelaunchAgent),
+        mark_agent_runtime_attached(&mut state, &agent_a, true);
+        assert!(
+            state.agents[0]
+                .runtime_binding
+                .as_ref()
+                .is_some_and(|binding| binding.attached)
+        );
 
-        // Split mode
-        KeyCode::Char('s' | 'S') if screen_mode == ScreenMode::Dashboard => {
-            Some(AppEvent::EnterSplitMode)
-        }
-        KeyCode::Esc if screen_mode == ScreenMode::Split => Some(AppEvent::ExitSplitMode),
+        clear_agent_runtime_attachment(&mut state);
+        assert!(state.agents.iter().all(|agent| {
+            agent
+                .runtime_binding
+                .as_ref()
+                .is_none_or(|binding| !binding.attached)
+        }));
+    }
 
-        // Grab mode (in split screen)
-        KeyCode::Char('g' | 'G') if screen_mode == ScreenMode::Split => {
-            Some(AppEvent::EnterGrabMode)
-        }
+    #[test]
+    fn mark_runtime_session_dead_sets_dead_and_detaches() {
+        let agent_id = AgentId(String::from("agent-1"));
+        let mut agent = sample_agent(&agent_id);
+        agent.status = AgentStatus::Running;
+        agent.runtime_binding = Some(RuntimeBinding {
+            session_name: String::from("sess"),
+            launch_signature: sample_signature(),
+            attached: true,
+            last_seen: None,
+        });
 
-        // Help and search
-        KeyCode::Char('?' | 'h' | 'H') | KeyCode::F(1) => Some(AppEvent::OpenHelp),
-        KeyCode::Char('/') => Some(AppEvent::OpenSearch),
+        let mut state = AppState::default();
+        state.agents.push(agent);
 
-        // Repository visibility filter
-        KeyCode::Char('v' | 'V') if screen_mode == ScreenMode::Dashboard => {
-            Some(AppEvent::ToggleHideIdleRepositories)
-        }
+        mark_runtime_session_dead_if_present(&mut state, &agent_id);
 
-        // Direct pane focus
-        KeyCode::Char('r' | 'R') => {
-            let mut state = app_state.write();
-            state.pane_focus = PaneFocus::Repositories;
-            persist_state_snapshot(ctx, &state);
-            None
-        }
-        KeyCode::Char('a' | 'A') => {
-            let mut state = app_state.write();
-            state.pane_focus = PaneFocus::Agents;
-            persist_state_snapshot(ctx, &state);
-            None
-        }
-        KeyCode::Char('t' | 'T') => {
-            let selected_running_agent_id = {
-                let mut state = app_state.write();
-                let running_agent_id = state
-                    .selected_agent()
-                    .filter(|agent| agent.is_running())
-                    .map(|agent| agent.id.clone());
+        assert_eq!(state.agents[0].status, AgentStatus::Dead);
+        assert!(
+            state.agents[0]
+                .runtime_binding
+                .as_ref()
+                .is_some_and(|binding| !binding.attached)
+        );
+    }
 
-                if running_agent_id.is_some() {
-                    state.pane_focus = PaneFocus::Terminal;
-                    if !state.terminal_focused {
-                        *state = std::mem::take(&mut *state).apply(AppEvent::ToggleTerminalFocus);
-                    }
-                } else {
-                    state.pane_focus = PaneFocus::Agents;
-                    state.terminal_focused = false;
-                }
+    #[test]
+    fn to_persisted_state_carries_hide_idle_toggle() {
+        let state = AppState {
+            hide_idle_repositories: true,
+            ..AppState::default()
+        };
 
-                running_agent_id
-            };
-
-            if let Some(agent_id) = selected_running_agent_id {
-                if let Some(ctx_arc) = &ctx
-                    && let Ok(mut ctx_guard) = ctx_arc.lock()
-                    && let Err(e) = ctx_guard.runtime.attach(&agent_id)
-                {
-                    warn!(
-                        agent_id = %agent_id.0,
-                        error = %e,
-                        "could not attach session on 't' focus"
-                    );
-                    let mut state = app_state.write();
-                    state.terminal_focused = false;
-                    state.pane_focus = PaneFocus::Agents;
-                    persist_state_snapshot(ctx, &state);
-                }
-            } else {
-                let mut state = app_state.write();
-                state.terminal_focused = false;
-                state.pane_focus = PaneFocus::Agents;
-                persist_state_snapshot(ctx, &state);
-            }
-
-            None
-        }
-
-        // Enter selects current item (edit agent/repo)
-        KeyCode::Enter => match pane_focus {
-            PaneFocus::Agents => selected_agent_id.clone().map(AppEvent::OpenEditAgent),
-            PaneFocus::Repositories => selected_repo_id.clone().map(AppEvent::OpenEditRepository),
-            PaneFocus::Terminal => {
-                // Toggle terminal focus on Enter when in terminal pane.
-                Some(AppEvent::ToggleTerminalFocus)
-            }
-        },
-
-        // Theme switching (1/2/3)
-        KeyCode::Char('1') => {
-            if let Some(ctx_arc) = &ctx
-                && let Ok(mut ctx_guard) = ctx_arc.lock()
-            {
-                let _ = ctx_guard.theme_manager.set_active("green-screen");
-            }
-            None
-        }
-        KeyCode::Char('2') => {
-            if let Some(ctx_arc) = &ctx
-                && let Ok(mut ctx_guard) = ctx_arc.lock()
-            {
-                let _ = ctx_guard.theme_manager.set_active("dracula");
-            }
-            None
-        }
-        KeyCode::Char('3') => {
-            if let Some(ctx_arc) = &ctx
-                && let Ok(mut ctx_guard) = ctx_arc.lock()
-            {
-                let _ = ctx_guard.theme_manager.set_active("default-dark");
-            }
-            None
-        }
-
-        _ => None,
+        let persisted = to_persisted_state(&state);
+        assert!(persisted.hide_idle_repositories);
     }
 }

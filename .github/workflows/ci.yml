@@ -67,14 +67,7 @@ jobs:
               warnings=$((warnings + 1))
             fi
           done < <(
-            find src tests -type f -name '*.rs' \
-              -not -path 'src/ui/components/*' \
-              -not -path 'src/ui/modals/*' \
-              -not -path 'src/ui/screens/*' \
-              -not -path 'src/main.rs' \
-              -not -path 'src/state/mod.rs' \
-              -not -path 'src/app_input.rs' \
-              | sort
+            find src tests -type f -name '*.rs' | sort
           )
 
           if [ "$found" -eq 0 ]; then
