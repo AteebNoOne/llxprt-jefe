@@ -14,7 +14,7 @@
 **Requirement text**: While in Issues Mode: suppress dashboard `a` focus-agents, `s/S` split-mode, split-mode `Esc`, destructive lifecycle keys (`Ctrl-d`, `Ctrl-k`, `l`). Route `/` to issue-list search; `?`/`h`/`F1` to help with Issues Mode bindings. Lowercase `s` is explicit no-op in Issues Mode.
 
 Behavior contract:
-- GIVEN existing key dispatch in `src/app_input/mod.rs` via `handle_normal_key_event()`
+- GIVEN existing key dispatch in `src/app_input/normal.rs` via `handle_normal_key_event()`
 - WHEN issues mode dispatch branch is added
 - THEN keys route through issues-mode priority chain when `screen_mode == DashboardIssues`; all existing normal-mode routing is unaffected
 
@@ -42,14 +42,17 @@ Why it matters:
   - marker: `@requirement REQ-ISS-002`
   - marker: `@pseudocode component-003 lines 01-17`
 
-- `src/app_input/mod.rs` — add key routing skeleton:
+- `src/app_input/issues.rs` — **NEW file** (following the existing `normal.rs`/`preflight.rs` submodule pattern):
   - Add `handle_issues_mode_key()` function stub (takes key event, state, context; returns early)
-  - Add issues mode branch in main key dispatch: when `InputMode::IssuesNormal | IssuesInline | IssuesSearch | IssuesFilter | IssuesChooser` → call `handle_issues_mode_key()`
   - Add suppression rule stubs: consume `s`, `Ctrl-d`, `Ctrl-k`, `l` as no-op when in issues mode
   - Import `GhClient` type for use in context
   - marker: `@plan PLAN-20260329-ISSUES-MODE.P09`
   - marker: `@requirement REQ-ISS-002`
   - marker: `@pseudocode component-003 lines 01-38`
+
+- `src/app_input/mod.rs` — add `mod issues;` declaration and add issues mode branch in main key dispatch:
+  - When `InputMode::IssuesNormal | IssuesInline | IssuesSearch | IssuesFilter | IssuesChooser` → call `issues::handle_issues_mode_key()`
+  - marker: `@plan PLAN-20260329-ISSUES-MODE.P09`
 
 - `src/main.rs` — add `GhClient` field to `AppContext` struct and initialize it in `fn main()` where the context is constructed:
   - marker: `@plan PLAN-20260329-ISSUES-MODE.P09`
@@ -66,7 +69,7 @@ cargo test --workspace --all-features
 ```
 
 ## Structural Verification Checklist
-- [ ] Issues mode key dispatch function exists and compiles in `src/app_input/mod.rs`
+- [ ] Issues mode key dispatch function `handle_issues_mode_key()` exists and compiles in `src/app_input/issues.rs` (declared as `mod issues;` in `src/app_input/mod.rs`)
 - [ ] `input_mode_for_state()` handles all 5 issues mode states (normal, inline, search, filter, chooser)
 - [ ] Suppression stubs exist for `s`, `Ctrl-d`, `Ctrl-k`, `l`
 - [ ] `GhClient` field added to `AppContext` in `src/main.rs` and initialized in `fn main()`
@@ -87,7 +90,7 @@ cargo test --workspace --all-features
 ## Deferred Implementation Detection (Mandatory)
 
 ```bash
-grep -RIn "TODO\|FIXME\|HACK\|placeholder\|for now\|will be implemented" src/app_input/mod.rs src/input.rs
+grep -RIn "TODO\|FIXME\|HACK\|placeholder\|for now\|will be implemented" src/app_input/mod.rs src/app_input/issues.rs src/input.rs
 ```
 
 Note: stub bodies with early returns in `handle_issues_mode_key()` are allowed in this phase.

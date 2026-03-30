@@ -46,7 +46,7 @@ Why it matters:
 ## Implementation Tasks
 
 ### Files to modify
-- `src/github/mod.rs` (expand from P03 skeleton)
+- `src/github/mod.rs` (expand from P03 skeleton — `src/github/` was created in P03, not pre-existing)
   - Define `GhError` enum with `thiserror` derive: NotAuthenticated, NotInstalled, RateLimited, AccessDenied, ApiError, ParseError, NetworkError
   - Define `IssueListResponse` struct: `{ issues: Vec<Issue>, cursor: Option<String>, has_more: bool }`
   - Define `CommentsResponse` struct: `{ comments: Vec<IssueComment>, cursor: Option<String>, has_more: bool }`

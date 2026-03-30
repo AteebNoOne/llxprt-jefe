@@ -269,14 +269,15 @@ The following file paths are confirmed to exist in the source tree at plan creat
 
 ### New Files to Create
 
-| New File | Purpose |
-|----------|---------|
-| `src/github/mod.rs` | GitHub client boundary (`GhClient`, `GhError`, response types) |
-| `src/ui/screens/issues.rs` | Issues mode screen layout (three-pane) |
-| `src/ui/components/issue_list.rs` | Issue list pane component |
-| `src/ui/components/issue_detail.rs` | Issue detail pane (body, comments, inline controls) |
-| `src/ui/components/filter_controls.rs` | Filter controls component |
-| `src/ui/components/agent_chooser.rs` | Send-to-agent agent chooser overlay |
+| New File | Purpose | Created In |
+|----------|---------|------------|
+| `src/github/mod.rs` | GitHub client boundary (`GhClient`, `GhError`, response types) | P03 (skeleton), P06 (full signatures), P08 (implementation) |
+| `src/app_input/issues.rs` | Issues-mode key handler (`handle_issues_mode_key()` and sub-handlers), declared as `mod issues;` in `src/app_input/mod.rs` | P09 (stub), P11 (implementation) |
+| `src/ui/screens/issues.rs` | Issues mode screen layout (three-pane) | P12 (stub), P14 (implementation) |
+| `src/ui/components/issue_list.rs` | Issue list pane component | P12 (stub), P14 (implementation) |
+| `src/ui/components/issue_detail.rs` | Issue detail pane (body, comments, inline controls) | P12 (stub), P14 (implementation) |
+| `src/ui/components/filter_controls.rs` | Filter controls component | P12 (stub), P14 (implementation) |
+| `src/ui/components/agent_chooser.rs` | Send-to-agent agent chooser overlay | P12 (stub), P14 (implementation) |
 
 ## Integration Contract
 
@@ -433,7 +434,7 @@ How `Dashboard` behavior is preserved when Issues Mode is inactive:
 
 - `ScreenMode::Dashboard` remains the `#[default]` value.
 - All existing `match screen_mode` arms covering `Dashboard` and `Split` continue to execute unchanged when the mode is either of those two values.
-- The new `DashboardIssues` arm is handled by the new `handle_issues_mode_key()` dispatch path added in `src/app_input/mod.rs` (before the existing handler), so no existing arm is disturbed.
+- The new `DashboardIssues` arm is handled by the new `handle_issues_mode_key()` function in `src/app_input/issues.rs` (called from `mod.rs` before the existing handler via `mod issues;` declaration), so no existing arm is disturbed.
 - When `screen_mode == Dashboard`, the `PaneFocus` cycle (`Repositories → Agents → Terminal`) operates exactly as today.
 - When `screen_mode == Dashboard`, the `s`/`S` → `EnterSplitMode` binding (src/app_input/normal.rs L148) fires normally because the guard is `screen_mode == ScreenMode::Dashboard`.
 
@@ -528,14 +529,14 @@ This glossary maps every plan-level name used in the specification and pseudocod
 | `issue_detail` focus | `IssueFocus::IssueDetail` | **New** | `src/state/types.rs` | Focus on the detail/comments pane. |
 | focus domain | `AppState.issues_state.issue_focus: IssueFocus` | **New** | `src/state/types.rs` | Active variant determines key dispatch branch. |
 | inline control | `InlineState::{Composer, Editor}` | **New** | `src/state/types.rs` | At most one active; exclusivity invariant enforced. |
-| scope change | Repository selection change while `screen_mode == DashboardIssues` | Behavioral | `src/app_input/mod.rs` / `src/state/mod.rs` | Triggers `handle_repo_scope_change_in_issues_mode` (component-003 L128–135). |
+| scope change | Repository selection change while `screen_mode == DashboardIssues` | Behavioral | `src/app_input/issues.rs` / `src/state/mod.rs` | Triggers `handle_repo_scope_change_in_issues_mode` (component-003 L128–135). |
 | `issue_base_prompt` | `Repository::issue_base_prompt: String` | **New** | `src/domain/mod.rs` L196+ | New field on existing struct; `#[serde(default)]` for compat. |
 | `IssuesState` | `AppState.issues_state: IssuesState` | **New** | `src/state/types.rs` | Aggregate struct for all issues-mode runtime state. |
 | `GhClient` | `crate::github::GhClient` | **New** | `src/github/mod.rs` | `gh` CLI wrapper; synchronous; isolated boundary. |
 | `GhError` | `crate::github::GhError` | **New** | `src/github/mod.rs` | Error enum (component-002 L75–82). |
 | `SendPayload` | `crate::github::SendPayload` | **New** | `src/github/mod.rs` | Built by `build_send_payload` (component-002 L62–74). |
 | `dispatch_issues_event` | `AppState::apply()` — L233. |
-| `route_issues_mode_key` | `handle_issues_mode_key()` | **New** | `src/app_input/mod.rs` | New function; called from `handle_normal_key_event()` when `screen_mode == DashboardIssues`. |
+| `route_issues_mode_key` | `handle_issues_mode_key()` | **New** | `src/app_input/issues.rs` | New function in `issues.rs` submodule (declared as `mod issues;` in `mod.rs`); called from `handle_normal_key_event()` when `screen_mode == DashboardIssues`. |
 | `handle_normal_key_event` — L61 | Entry point for normal-mode key dispatch; gains issues branch. |
 | `dispatch_app_event` | `pub fn dispatch_app_event(...)` | **Existing** | `src/app_input/mod.rs` L359 | Event dispatch entry; unchanged in signature. |
 | `input_mode_for_state` | `pub fn input_mode_for_state(state: &AppState) -> InputMode` | **Existing** | `src/input.rs` L30 | Gains issues-mode detection before existing `Normal` fallback. |

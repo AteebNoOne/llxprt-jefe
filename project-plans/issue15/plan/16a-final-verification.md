@@ -67,7 +67,7 @@ echo "--- ScreenMode (MUST have: Dashboard, Split, DashboardIssues) ---"
 grep -A6 "pub enum ScreenMode" src/state/types.rs
 
 # Count new files
-find src/github/ src/ui/components/issue_list.rs src/ui/components/issue_detail.rs src/ui/components/filter_controls.rs src/ui/components/agent_chooser.rs src/ui/screens/issues.rs -type f 2>/dev/null | wc -l
+find src/github/ src/app_input/issues.rs src/ui/components/issue_list.rs src/ui/components/issue_detail.rs src/ui/components/filter_controls.rs src/ui/components/agent_chooser.rs src/ui/screens/issues.rs -type f 2>/dev/null | wc -l
 ```
 
 ### Comprehensive Test Count
@@ -98,7 +98,7 @@ done
 - [ ] `PaneFocus` unchanged (3 original variants only).
 - [ ] `IssueFocus` is separate enum.
 - [ ] `ScreenMode` has `Dashboard`, `Split`, `DashboardIssues`.
-- [ ] All new files accounted for (6 new files).
+- [ ] All new files accounted for (7 new files: `src/github/mod.rs`, `src/app_input/issues.rs`, `src/ui/screens/issues.rs`, `src/ui/components/issue_list.rs`, `src/ui/components/issue_detail.rs`, `src/ui/components/filter_controls.rs`, `src/ui/components/agent_chooser.rs`).
 
 ## Semantic Verification Checklist (Mandatory)
 - [ ] **Complete user journey verified**: User can enter issues mode (`i`), browse issue list, select issue, view detail, create comment, reply to comment, edit body, send to agent, filter issues, search issues, paginate, and exit (`a`/`Esc`).

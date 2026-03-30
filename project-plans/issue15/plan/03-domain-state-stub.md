@@ -68,7 +68,7 @@ Why it matters:
 ## Implementation Tasks
 
 ### Files to create
-- `src/github/mod.rs` — GitHub client boundary module skeleton
+- `src/github/mod.rs` — **NEW directory and file** (does not exist before this phase); GitHub client boundary module skeleton
   - `GhClient` struct with method stubs (all return `todo!()`)
   - `GhError` enum skeleton
   - marker: `@plan PLAN-20260329-ISSUES-MODE.P03`

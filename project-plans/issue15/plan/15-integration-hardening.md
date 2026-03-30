@@ -166,7 +166,7 @@ Why it matters:
 
 - Fix integration issues found during testing:
   - `src/state/mod.rs` — Fix any state transition edge cases found
-  - `src/app_input/mod.rs` — Fix any key routing integration issues
+  - `src/app_input/issues.rs` — Fix any key routing integration issues (issues-mode handler)
   - `src/github/mod.rs` — Fix any error handling gaps
   - `src/ui/` — Fix any rendering issues found during integration
   - All fixes must maintain `@plan`, `@requirement` markers

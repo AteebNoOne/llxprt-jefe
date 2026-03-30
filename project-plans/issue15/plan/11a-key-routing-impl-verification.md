@@ -6,7 +6,7 @@
 ## Prerequisites
 - Required: Phase P11 completed.
 - Verify previous artifacts: `.completed/P11.md` exists.
-- Expected files from previous phase: implemented key routing in `src/app_input/mod.rs` and `src/input.rs` with all 25 tests GREEN, `GhClient` wired for all operations, no stubs remaining.
+- Expected files from previous phase: implemented key routing in `src/app_input/issues.rs` (declared as `mod issues;` in `src/app_input/mod.rs`) and `src/input.rs` with all 25 tests GREEN, `GhClient` wired for all operations, no stubs remaining.
 
 ## Requirements Implemented (Expanded)
 
@@ -43,13 +43,13 @@ cargo test --workspace --all-features
 
 ### No-Stub Verification
 ```bash
-grep -rn "todo!()\|unimplemented!()" src/app_input/mod.rs src/input.rs && echo "FAIL: stubs remain" || echo "OK: no stubs"
+grep -rn "todo!()\|unimplemented!()" src/app_input/mod.rs src/app_input/issues.rs src/input.rs && echo "FAIL: stubs remain" || echo "OK: no stubs"
 ```
 
 ### GhClient Wiring Verification
 ```bash
 # Verify GhClient methods are called from app_input
-grep -n "list_issues\|get_issue_detail\|list_comments\|create_comment\|update_comment\|update_issue_body\|build_send_payload\|check_auth" src/app_input/mod.rs
+grep -n "list_issues\|get_issue_detail\|list_comments\|create_comment\|update_comment\|update_issue_body\|build_send_payload\|check_auth" src/app_input/issues.rs
 ```
 
 ### Existing Behavior Regression Verification
@@ -63,7 +63,7 @@ cargo test --workspace --all-features -- handle_normal_key 2>&1 | tail -10
 ```bash
 # Every new function in src/app_input/ must have @plan + @requirement + @pseudocode
 echo "--- Plan markers in key routing functions ---"
-grep -B5 "fn handle_issues\|fn handle_issue_list\|fn handle_issue_detail\|fn handle_inline\|fn handle_agent_chooser\|fn handle_search_input\|fn handle_filter" src/app_input/mod.rs | grep "@plan\|@requirement\|@pseudocode\|fn "
+grep -B5 "fn handle_issues\|fn handle_issue_list\|fn handle_issue_detail\|fn handle_inline\|fn handle_agent_chooser\|fn handle_search_input\|fn handle_filter" src/app_input/issues.rs | grep "@plan\|@requirement\|@pseudocode\|fn "
 ```
 
 ## Structural Verification Checklist
@@ -89,7 +89,7 @@ grep -B5 "fn handle_issues\|fn handle_issue_list\|fn handle_issue_detail\|fn han
 ## Deferred Implementation Detection (Mandatory)
 
 ```bash
-grep -RIn "TODO\|FIXME\|HACK\|placeholder\|for now\|will be implemented" src/app_input/mod.rs src/input.rs
+grep -RIn "TODO\|FIXME\|HACK\|placeholder\|for now\|will be implemented" src/app_input/mod.rs src/app_input/issues.rs src/input.rs
 ```
 
 ## Success Criteria

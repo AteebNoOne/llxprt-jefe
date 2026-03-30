@@ -6,7 +6,7 @@
 ## Prerequisites
 - Required: Phase P09A completed
 - Verify previous phase markers/artifacts exist: `.completed/P09.md`, `.completed/P09A.md`
-- Expected files from previous phase: key routing stubs in `src/app_input/mod.rs`, input mode extensions in `src/input.rs`
+- Expected files from previous phase: key routing stubs in `src/app_input/issues.rs` (declared as `mod issues;` in `src/app_input/mod.rs`), input mode extensions in `src/input.rs`
 
 ## Requirements Implemented (Expanded)
 
@@ -154,7 +154,7 @@ Why it matters:
 ## Implementation Tasks
 
 ### Files to create or modify
-- Tests in inline `#[cfg(test)]` modules in `src/app_input/mod.rs` or `src/state/mod.rs`:
+- Tests in inline `#[cfg(test)]` modules in `src/app_input/issues.rs` or `src/state/mod.rs`:
   - `test_i_key_enters_issues_mode`
     - marker: `@plan PLAN-20260329-ISSUES-MODE.P10`
     - marker: `@requirement REQ-ISS-001`

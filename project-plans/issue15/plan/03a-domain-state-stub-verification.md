@@ -6,7 +6,7 @@
 ## Prerequisites
 - Required: Phase P03 completed.
 - Verify previous artifacts: `.completed/P03.md` exists.
-- Expected files from previous phase: updated `src/domain/mod.rs`, `src/state/types.rs`, `src/state/mod.rs`, `src/input.rs`, `src/lib.rs`, new `src/github/mod.rs`.
+- Expected files from previous phase: updated `src/domain/mod.rs`, `src/state/types.rs`, `src/state/mod.rs`, `src/input.rs`, `src/lib.rs`, **newly created** `src/github/mod.rs` (skeleton — created by P03, did not exist before).
 
 ## Requirements Implemented (Expanded)
 

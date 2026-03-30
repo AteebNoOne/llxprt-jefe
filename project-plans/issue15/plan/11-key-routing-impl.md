@@ -6,7 +6,7 @@
 ## Prerequisites
 - Required: Phase P10A completed
 - Verify previous phase markers/artifacts exist: `.completed/P10.md`, `.completed/P10A.md`
-- Expected files from previous phase: failing (RED) test suite for key routing (25 tests) in `src/app_input/mod.rs` and/or `src/state/mod.rs`
+- Expected files from previous phase: failing (RED) test suite for key routing (25 tests) in `src/app_input/issues.rs` and/or `src/state/mod.rs`
 
 ## Requirements Implemented (Expanded)
 
@@ -125,7 +125,7 @@ Why it matters:
 ## Implementation Tasks
 
 ### Files to modify
-- `src/app_input/mod.rs` — implement `handle_issues_mode_key()` with full 7-level priority chain:
+- `src/app_input/issues.rs` — implement `handle_issues_mode_key()` with full 7-level priority chain:
   - Level 1: inline editor/composer keys (Esc, Ctrl+Enter, Char, Backspace)
     - marker: `@plan PLAN-20260329-ISSUES-MODE.P11`
     - marker: `@requirement REQ-ISS-010`
@@ -250,7 +250,7 @@ cargo test --workspace --all-features
 ## Deferred Implementation Detection (Mandatory)
 
 ```bash
-grep -RIn "TODO\|FIXME\|HACK\|placeholder\|for now\|will be implemented" src/app_input/mod.rs src/input.rs
+grep -RIn "TODO\|FIXME\|HACK\|placeholder\|for now\|will be implemented" src/app_input/mod.rs src/app_input/issues.rs src/input.rs
 ```
 
 ## Success Criteria

@@ -6,7 +6,7 @@
 ## Prerequisites
 - Required: Phase P09 completed.
 - Verify previous artifacts: `.completed/P09.md` exists.
-- Expected files from previous phase: key routing stubs in `src/app_input/mod.rs` and input mode extensions in `src/input.rs`.
+- Expected files from previous phase: key routing stubs in `src/app_input/issues.rs` (new file, declared as `mod issues;` in `src/app_input/mod.rs`) and input mode extensions in `src/input.rs`.
 
 ## Requirements Implemented (Expanded)
 
@@ -41,7 +41,7 @@ cargo test --workspace --all-features
 ### Key Routing Presence Verification
 ```bash
 # Verify issues mode dispatch function exists
-grep -n "fn handle_issues_mode_key\|fn handle_issues_key" src/app_input/mod.rs
+grep -n "fn handle_issues_mode_key\|fn handle_issues_key" src/app_input/issues.rs
 
 # Verify InputMode issues variants
 grep -n "IssuesNormal\|IssuesInline\|IssuesSearch\|IssuesFilter\|IssuesChooser" src/input.rs
@@ -68,11 +68,11 @@ grep -rA3 "Ctrl.*'d'" src/app_input/ | head -6
 
 ### Traceability Marker Verification
 ```bash
-grep -c "@plan PLAN-20260329-ISSUES-MODE.P09\|@requirement REQ-ISS-002\|@pseudocode component-003" src/app_input/mod.rs src/input.rs || echo "WARN: missing markers"
+grep -c "@plan PLAN-20260329-ISSUES-MODE.P09\|@requirement REQ-ISS-002\|@pseudocode component-003" src/app_input/mod.rs src/app_input/issues.rs src/input.rs || echo "WARN: missing markers"
 ```
 
 ## Structural Verification Checklist
-- [ ] Key routing dispatch function exists and compiles in `src/app_input/mod.rs`.
+- [ ] Key routing dispatch function `handle_issues_mode_key()` exists and compiles in `src/app_input/issues.rs` (declared as `mod issues;` in `src/app_input/mod.rs`).
 - [ ] InputMode extensions exist (all 5 issues variants).
 - [ ] `input_mode_for_state()` handles `DashboardIssues`.
 - [ ] GhClient accessible from app context.
@@ -93,7 +93,7 @@ grep -c "@plan PLAN-20260329-ISSUES-MODE.P09\|@requirement REQ-ISS-002\|@pseudoc
 ## Deferred Implementation Detection (Mandatory)
 
 ```bash
-grep -RIn "TODO\|FIXME\|HACK\|placeholder\|for now\|will be implemented" src/app_input/mod.rs src/input.rs
+grep -RIn "TODO\|FIXME\|HACK\|placeholder\|for now\|will be implemented" src/app_input/mod.rs src/app_input/issues.rs src/input.rs
 ```
 
 Note: Stub bodies with early returns in `handle_issues_mode_key()` are allowed.
