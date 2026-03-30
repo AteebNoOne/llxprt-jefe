@@ -285,7 +285,7 @@ The following file paths are confirmed to exist in the source tree at plan creat
 - `src/app_input/normal.rs` — key routing via `handle_normal_key_event()` (L61)
 - `src/app_input/mod.rs` — event dispatch via `dispatch_app_event()` (L359)
 - `src/input.rs` — `input_mode_for_state()` resolution; currently returns `Normal`/`TerminalCapture`/`Help`/`Search`/`Form`/`Confirm`
-- `src/state/mod.rs` — `AppState::apply()` event reducer, `ScreenMode` (`Dashboard`/`Split`), `PaneFocus` (`Repositories`/`Agents`/`Terminal`)
+- `src/state/mod.rs` — `AppState::apply()` event reducer (L233); types re-exported from `src/state/types.rs`
 - `src/domain/mod.rs` — entity types: `Repository` { id, name, slug, base_dir, default_profile, remote, agent_ids }
 - `src/persistence/mod.rs` — `State` struct serialization with `repositories: Vec<Repository>`, `agents: Vec<Agent>`
 - `src/ui/screens/dashboard.rs` — dashboard layout rendering
@@ -510,7 +510,7 @@ This glossary maps every plan-level name used in the specification and pseudocod
 | Plan / Spec Term | Rust Identifier | Status | File | Notes |
 |------------------|----------------|--------|------|-------|
 | `dashboard_agents` | `ScreenMode::Dashboard` | **Existing** | `src/state/mod.rs` L231 | The current default mode. NOT renamed. |
-| `dashboard_issues` | `ScreenMode::DashboardIssues` | **New** | `src/state/mod.rs` | New variant added to `ScreenMode`. |
+| `dashboard_issues` | `ScreenMode::DashboardIssues` | **New** | `src/state/types.rs` | New variant added to `ScreenMode` (re-exported via mod.rs). |
 | `split_mode` | `ScreenMode::Split ... L224 in src/state/types.rs | Unchanged. |
 | Agents Mode | `ScreenMode::Dashboard` + `PaneFocus::{Repositories,Agents,Terminal}` | **Existing** | `src/state/mod.rs` L229–241 | The current dashboard with agent management. |
 | Issues Mode | `ScreenMode::DashboardIssues` + `IssueFocus::{RepoList,IssueList,IssueDetail}` | **New** | `src/state/mod.rs` | New mode; uses separate focus enum. |

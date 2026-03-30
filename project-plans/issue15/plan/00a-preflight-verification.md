@@ -155,8 +155,8 @@ grep -A3 "InputMode::Normal" src/input.rs
 - [ ] Key routing for `a`/`A` currently sets `pane_focus = PaneFocus::Agents` (L174)
 - [ ] Key routing for `s`/`S` currently maps to `EnterSplitMode` when `screen_mode == Dashboard` (L148-150)
 - [ ] Key routing for `Ctrl-d` currently maps to `OpenDeleteAgent`/`OpenDeleteRepository` (L129-137)
-- [ ] Key routing for `Ctrl-k` currently maps to `KillAgent` (L937-939)
-- [ ] Key routing for `l`/`L` currently maps to `RelaunchAgent` (L942)
+- [ ] Key routing for `Ctrl-k` currently maps to `KillAgent` (L140-142 in src/app_input/normal.rs)
+- [ ] Key routing for `l`/`L` currently maps to `RelaunchAgent` (L145 in src/app_input/normal.rs)
 
 ```bash
 # Verify handle_normal_key_event signature
@@ -515,7 +515,7 @@ Verification command: `sed -n '858,865p' src/app_input/mod.rs`
 | `s` / `S` | `EnterSplitMode` when `screen_mode == Dashboard` | ~L148 | Explicit no-op when `screen_mode == DashboardIssues` |
 | `Esc` | `ExitSplitMode` when `screen_mode == Split` | ~L151 | In issues mode: 6-level precedence chain (component-001 L115–127) |
 | `Ctrl-d` | `OpenDeleteAgent` / `OpenDeleteRepository` | ~L129–934 | Suppress (no-op) in issues mode |
-| `Ctrl-k` | `KillAgent` | ~L937–939 | Suppress (no-op) in issues mode |
+| `Ctrl-k` | `KillAgent` | ~L140-142 in normal.rs | Suppress (no-op) in issues mode |
 | `l` / `L` | `RelaunchAgent` | ~L145 | Suppress (no-op) in issues mode |
 | `r` / `R` | Sets `pane_focus = PaneFocus::Repositories` directly | ~L168–173 | Suppress in issues mode (`r` → inline reply; focus-repo not applicable) |
 

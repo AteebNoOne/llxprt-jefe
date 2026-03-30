@@ -79,7 +79,7 @@ Forbidden couplings:
 
 | Module | Integration |
 |--------|-------------|
-| `src/state/mod.rs` | Add `IssuesState`, issue events to `AppEvent`, `dashboard_issues` to `ScreenMode`, issue focus domains to `PaneFocus` |
+| `src/state/types.rs` | Add `IssuesState`, issue events to `AppEvent`, `DashboardIssues` to `ScreenMode`, issue focus domains to `PaneFocus` (re-exported via `src/state/mod.rs`) |
 | `src/domain/mod.rs` | Add `Issue`, `IssueComment`, `IssueState`, `IssueFilter` types; add `issue_base_prompt` to `Repository` |
 | `src/input.rs` | Add `InputMode::Issues*` variants or extend routing for issues mode |
 | `src/app_input/mod.rs` (main crate) | Add issues-mode key dispatch, `handle_issues_key`, suppression rules |
