@@ -177,7 +177,7 @@ Note: `todo!()` / `unimplemented!()` in stub method bodies within `src/github/mo
 - [ ] Semantic checks pass
 
 ## Failure Recovery
-- rollback steps: `git restore src/domain/mod.rs src/state/mod.rs src/input.rs src/lib.rs src/persistence/mod.rs` and `rm -rf src/github/`
+- rollback steps: `git restore src/domain/mod.rs src/state/mod.rs src/input.rs src/lib.rs src/persistence/mod.rs` and `git clean -fd src/github/` (only removes untracked files in that directory; safer than `rm -rf`)
 - blocking issues to resolve before next phase: missing type contracts, serde backward compat failure, broken existing match arms
 
 ## Phase Completion Marker

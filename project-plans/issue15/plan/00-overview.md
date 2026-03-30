@@ -299,30 +299,36 @@ This subsection names the exact existing functions and their verified line numbe
 #### `handle_normal_key_event` — `src/app_input/normal.rs` L61
 
 ```
-pub fn handle_normal_key_event(key: KeyEvent, state: &AppState, ctx: &SharedContext) -> Vec<AppEvent>
+pub fn handle_normal_key_event(
+    app_state: &mut AppStateHandle,
+    should_quit: &mut QuitHandle,
+    ctx: &SharedContext,
+    key_event: &KeyEvent,
+    screen_mode: ScreenMode,
+) -> Option<AppEvent>
 ```
 
-- **Role**: Top-level entry point for all keyboard events when `InputMode::Normal` is active. Receives the raw `KeyEvent` and the current `AppState`, and returns a list of `AppEvent`s to dispatch.
-- **Current behavior**: Checks `state.screen_mode` and routes to per-mode handlers. Currently handles `ScreenMode::Dashboard` and `ScreenMode::Split`.
-- **Integration point for Issues Mode**: A new guard `if state.screen_mode == ScreenMode::DashboardIssues` is added **before** the existing `Dashboard`/`Split` routing. When matched, it calls the new `handle_issues_mode_key()` function and returns early. The existing routing is never reached when in issues mode, preserving all existing behavior exactly.
+- **Role**: Top-level entry point for all keyboard events when `InputMode::Normal` is active. Takes a mutable `AppStateHandle`, a quit handle, the shared context, the raw `KeyEvent`, and the current `ScreenMode`. Returns `Option<AppEvent>` — `Some(event)` to dispatch, or `None` when the key was consumed without emitting an event (e.g., direct state mutation for focus changes).
+- **Current behavior**: Checks `screen_mode` and routes to per-mode handlers. Currently handles `ScreenMode::Dashboard` and `ScreenMode::Split`.
+- **Integration point for Issues Mode**: A new guard `if screen_mode == ScreenMode::DashboardIssues` is added **before** the existing `Dashboard`/`Split` routing. When matched, it calls the new `handle_issues_mode_key()` function and returns early. The existing routing is never reached when in issues mode, preserving all existing behavior exactly.
 - **Module pattern**: Following the existing split (`normal.rs`, `preflight.rs`), the new issues mode handler should live in a new `src/app_input/issues.rs` submodule, declared in `src/app_input/mod.rs`.
 - **Verification**: `grep -n "handle_normal_key_event" src/app_input/normal.rs` must show at L61. Any issues-mode routing added here must not alter the return path for `Dashboard` or `Split` modes.
 
 #### `dispatch_app_event` — `src/app_input/mod.rs` L359
 
 ```
-pub fn dispatch_app_event(event: AppEvent, state: &AppState, ctx: &SharedContext) -> Vec<AppEvent>
+pub fn dispatch_app_event(app_state: &mut AppStateHandle, ctx: &SharedContext, evt: AppEvent) {
 ```
 
-- **Role**: Synchronous event dispatch function. Receives a single `AppEvent`, applies any side-effects (I/O, async task spawning), and returns zero or more follow-up events to re-dispatch.
-- **Current behavior**: Matches on `AppEvent` variants to perform I/O (agent launch, file system ops) or emit chained events.
-- **Integration point for Issues Mode**: New `AppEvent` variants (`EnterIssuesMode`, `IssueListLoaded`, `CommentCreated`, etc.) are added as new match arms in this function. The new arms call `GhClient` methods (synchronously or by spawning background tasks) and emit follow-up events. No existing arms are modified.
+- **Role**: Synchronous event dispatch function. Takes a mutable `AppStateHandle`, the shared context, and a single `AppEvent`. Applies side-effects (I/O, async task spawning) and mutates state directly. Returns nothing (`()`) — follow-up state changes are applied internally via `app_state.write()` and `AppState::apply()`.
+- **Current behavior**: Matches on `AppEvent` variants to perform I/O (agent launch, file system ops) and apply state transitions.
+- **Integration point for Issues Mode**: New `AppEvent` variants (`EnterIssuesMode`, `IssueListLoaded`, `CommentCreated`, etc.) are added as new match arms in this function. The new arms call `GhClient` methods (synchronously or by spawning background tasks) and apply results to state. No existing arms are modified.
 - **Verification**: `grep -n "dispatch_app_event" src/app_input/mod.rs` must show exactly one `pub fn` definition at L359. New issues-mode arms must be additive (no modification of existing arms).
 
 #### `AppState::apply` — `src/state/mod.rs` L233
 
-```
-pub fn apply(self, event: AppEvent) -> AppState
+```rust
+pub fn apply(mut self, event: AppEvent) -> Self {
 ```
 
 - **Role**: Pure state reducer. Takes the current `AppState` and an `AppEvent`, returns the next `AppState`. No I/O, no side effects. This is the single source of truth for all state transitions.
@@ -336,16 +342,19 @@ pub fn apply(self, event: AppEvent) -> AppState
 KeyEvent (from terminal)
   │
   ▼
-handle_normal_key_event` — L61
+handle_normal_key_event(app_state, should_quit, ctx, key_event, screen_mode) — L61
   │  [guard: screen_mode == DashboardIssues]
+  │  returns Option<AppEvent>
   ▼
-handle_issues_mode_key(key, state, ctx)            ← src/app_input/mod.rs (NEW, P09/P11)
-  │  [determines AppEvent(s) based on focus domain + key]
+handle_issues_mode_key(app_state, ctx, key_event)  ← src/app_input/issues.rs (NEW, P09/P11)
+  │  [determines AppEvent based on focus domain + key]
+  │  returns Option<AppEvent>
   ▼
-dispatch_app_event(event, state, ctx)              ← src/app_input/mod.rs L359
-  │  [performs I/O, spawns tasks, emits follow-up events]
+dispatch_app_event(app_state, ctx, evt)            ← src/app_input/mod.rs L359
+  │  [performs I/O, spawns tasks; mutates state directly]
+  │  calls app_state.write() and AppState::apply() internally
   ▼
-AppState::apply(state, event)                      ← src/state/mod.rs L233
+AppState::apply(self, event) -> Self               ← src/state/mod.rs L233
   │  [pure state transition; returns new AppState]
   ▼
 New AppState (rendered by UI on next frame)
@@ -405,8 +414,8 @@ Current source (verified):
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ScreenMode {
     #[default]
-    Dashboard,   // L231 — default variant; represents Agents Mode
-    Split,       // L232 — split-view mode
+    Dashboard,   // L223 — default variant; represents Agents Mode
+    Split,       // L224 — split-view mode
 }
 ```
 
@@ -437,9 +446,9 @@ Current source (verified):
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PaneFocus {
     #[default]
-    Repositories,  // L239 — repository list pane
-    Agents,        // L240 — agent list pane
-    Terminal,      // L241 — terminal pane
+    Repositories,  // L231 — repository list pane
+    Agents,        // L232 — agent list pane
+    Terminal,      // L233 — terminal pane
 }
 ```
 
@@ -509,10 +518,10 @@ This glossary maps every plan-level name used in the specification and pseudocod
 
 | Plan / Spec Term | Rust Identifier | Status | File | Notes |
 |------------------|----------------|--------|------|-------|
-| `dashboard_agents` | `ScreenMode::Dashboard` | **Existing** | `src/state/mod.rs` L231 | The current default mode. NOT renamed. |
+| `dashboard_agents` | `ScreenMode::Dashboard` | **Existing** | `src/state/types.rs` L223 | The current default mode. NOT renamed. |
 | `dashboard_issues` | `ScreenMode::DashboardIssues` | **New** | `src/state/types.rs` | New variant added to `ScreenMode` (re-exported via mod.rs). |
-| `split_mode` | `ScreenMode::Split ... L224 in src/state/types.rs | Unchanged. |
-| Agents Mode | `ScreenMode::Dashboard` + `PaneFocus::{Repositories,Agents,Terminal}` | **Existing** | `src/state/mod.rs` L229–241 | The current dashboard with agent management. |
+| `split_mode` | `ScreenMode::Split` | **Existing** | `src/state/types.rs` L224 | Unchanged. |
+| Agents Mode | `ScreenMode::Dashboard` + `PaneFocus::{Repositories,Agents,Terminal}` | **Existing** | `src/state/types.rs` L221–234 | The current dashboard with agent management. |
 | Issues Mode | `ScreenMode::DashboardIssues` + `IssueFocus::{RepoList,IssueList,IssueDetail}` | **New** | `src/state/mod.rs` | New mode; uses separate focus enum. |
 | `repo_list` focus | `IssueFocus::RepoList` | **New** | `src/state/mod.rs` | Focus on the repository sidebar within Issues Mode. |
 | `issue_list` focus | `IssueFocus::IssueList` | **New** | `src/state/mod.rs` | Focus on the issue list pane. |

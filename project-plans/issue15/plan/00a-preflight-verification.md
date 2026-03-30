@@ -171,25 +171,25 @@ grep -n "fn dispatch_app_event" src/app_input/mod.rs
 echo "--- 'i' key check ---"
 grep -rn "Char('i'" src/app_input/ || echo "OK: 'i' not bound (available)"
 
-# Verify current 'a' binding (focus agents)
+# Verify current 'a' binding (focus agents) — in normal.rs
 echo "--- 'a' key binding ---"
-sed -n '971,975p' src/app_input/mod.rs
+grep -n "Char('a'" src/app_input/normal.rs
 
-# Verify current 's' binding (split mode)
+# Verify current 's' binding (split mode) — in normal.rs
 echo "--- 's' key binding ---"
-sed -n '945,948p' src/app_input/mod.rs
+grep -n "Char('s'" src/app_input/normal.rs
 
-# Verify Ctrl-d binding (delete)
+# Verify Ctrl-d binding (delete) — in normal.rs
 echo "--- Ctrl-d binding ---"
-sed -n '926,934p' src/app_input/mod.rs
+grep -n "Char('d'" src/app_input/normal.rs
 
-# Verify Ctrl-k binding (kill)
+# Verify Ctrl-k binding (kill) — in normal.rs
 echo "--- Ctrl-k binding ---"
-sed -n '937,939p' src/app_input/mod.rs
+grep -n "Char('k'" src/app_input/normal.rs
 
-# Verify 'l' binding (relaunch)
+# Verify 'l' binding (relaunch) — in normal.rs
 echo "--- 'l' binding ---"
-sed -n '942,942p' src/app_input/mod.rs
+grep -n "Char('l'" src/app_input/normal.rs
 ```
 
 #### 4d) `src/domain/mod.rs` — Repository Struct
@@ -369,12 +369,12 @@ This section lists the actual function signatures, enum variants, and struct fie
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ScreenMode {
     #[default]
-    Dashboard,   // L231
-    Split,       // L232
+    Dashboard,   // L223
+    Split,       // L224
 }
 ```
 
-Verification command: `sed -n '228,234p' src/state/mod.rs`
+Verification command: `grep -n "pub enum ScreenMode" src/state/types.rs`
 
 #### `PaneFocus` — L229–234 (in src/state/types.rs)
 
@@ -382,13 +382,13 @@ Verification command: `sed -n '228,234p' src/state/mod.rs`
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PaneFocus {
     #[default]
-    Repositories,  // L239
-    Agents,        // L240
-    Terminal,      // L241
+    Repositories,  // L231
+    Agents,        // L232
+    Terminal,      // L233
 }
 ```
 
-Verification command: `sed -n '236,243p' src/state/mod.rs`
+Verification command: `grep -n "pub enum PaneFocus" src/state/types.rs`
 
 #### `AppState` struct — L238–264 (in src/state/types.rs)
 
@@ -423,7 +423,7 @@ pub struct AppState {
 }
 ```
 
-Verification command: `sed -n '246,275p' src/state/mod.rs`
+Verification command: `grep -n "pub struct AppState" src/state/types.rs`
 
 #### `AppEvent` enum — L268–338
 
@@ -504,7 +504,7 @@ Returns: `Option<AppEvent>` — the event to dispatch, or `None` if key was cons
 
 The new `handle_issues_mode_key()` function will have the same parameter shape. It will be called when `screen_mode == ScreenMode::DashboardIssues` before the existing handler logic runs, so the `ScreenMode::Dashboard` and `ScreenMode::Split` paths remain unmodified.
 
-Verification command: `sed -n '858,865p' src/app_input/mod.rs`
+Verification command: `grep -n "pub fn handle_normal_key_event" src/app_input/normal.rs`
 
 #### Key bindings currently occupying relevant keys (verified in `handle_normal_key_event`):
 
@@ -514,15 +514,15 @@ Verification command: `sed -n '858,865p' src/app_input/mod.rs`
 | `a` / `A` | Sets `pane_focus = PaneFocus::Agents` directly (no event emitted) | ~L174 | Suppress / redirect to `ExitIssuesMode` when in `DashboardIssues` |
 | `s` / `S` | `EnterSplitMode` when `screen_mode == Dashboard` | ~L148 | Explicit no-op when `screen_mode == DashboardIssues` |
 | `Esc` | `ExitSplitMode` when `screen_mode == Split` | ~L151 | In issues mode: 6-level precedence chain (component-001 L115–127) |
-| `Ctrl-d` | `OpenDeleteAgent` / `OpenDeleteRepository` | ~L129–934 | Suppress (no-op) in issues mode |
+| `Ctrl-d` | `OpenDeleteAgent` / `OpenDeleteRepository` | ~L129–137 in normal.rs | Suppress (no-op) in issues mode |
 | `Ctrl-k` | `KillAgent` | ~L140-142 in normal.rs | Suppress (no-op) in issues mode |
 | `l` / `L` | `RelaunchAgent` | ~L145 | Suppress (no-op) in issues mode |
 | `r` / `R` | Sets `pane_focus = PaneFocus::Repositories` directly | ~L168–173 | Suppress in issues mode (`r` → inline reply; focus-repo not applicable) |
 
 Verification commands:
 ```bash
-sed -n '926,950p' src/app_input/mod.rs    # Ctrl-d, Ctrl-k, l, s bindings
-sed -n '967,980p' src/app_input/mod.rs    # r, a pane-focus bindings
+grep -n "Char('d'\|Char('k'\|Char('l'\|Char('s'" src/app_input/normal.rs    # Ctrl-d, Ctrl-k, l, s bindings
+grep -n "Char('r'\|Char('a'" src/app_input/normal.rs    # r, a pane-focus bindings
 grep -rn "Char('i'" src/app_input/   # confirm 'i' unbound
 ```
 
@@ -553,17 +553,17 @@ pub struct Repository {
   ```
   The `#[serde(default)]` attribute ensures existing `state.json` files (which lack the field) deserialize cleanly with an empty string.
 
-Verification command: `sed -n '101,115p' src/domain/mod.rs`
+Verification command: `grep -A15 "pub struct Repository" src/domain/mod.rs`
 
 ### Summary Table — Signatures the Plan Depends On
 
 | Identifier | Kind | File | Line | Plan Dependency |
 |-----------|------|------|------|----------------|
-| `ScreenMode::Dashboard` | Enum variant | `src/state/mod.rs` | L231 | Default preserved; issues mode adds `DashboardIssues` alongside |
-| `ScreenMode::Split ... L224 in src/state/types.rs | Preserved; suppression guard `screen_mode == Dashboard` at L148 still fires correctly |
-| `PaneFocus::Repositories` | Enum variant | `src/state/mod.rs` | L239 | Preserved; issues mode uses `IssueFocus` instead |
-| `PaneFocus::Agents` | Enum variant | `src/state/mod.rs` | L240 | Preserved; `a` key redirected only when `screen_mode == DashboardIssues` |
-| `PaneFocus::Terminal` | Enum variant | `src/state/mod.rs` | L241 | Preserved; unaffected by issues mode |
+| `ScreenMode::Dashboard` | Enum variant | `src/state/types.rs` | L223 | Default preserved; issues mode adds `DashboardIssues` alongside |
+| `ScreenMode::Split` | Enum variant | `src/state/types.rs` | L224 | Preserved; suppression guard `screen_mode == Dashboard` at L148 still fires correctly |
+| `PaneFocus::Repositories` | Enum variant | `src/state/types.rs` | L231 | Preserved; issues mode uses `IssueFocus` instead |
+| `PaneFocus::Agents` | Enum variant | `src/state/types.rs` | L232 | Preserved; `a` key redirected only when `screen_mode == DashboardIssues` |
+| `PaneFocus::Terminal` | Enum variant | `src/state/types.rs` | L233 | Preserved; unaffected by issues mode |
 | `AppState` — `src/state/types.rs` L238 | Gains `issues_state: IssuesState` field |
 | `AppState::apply()` — L233 | Issues events handled in new `match` arms added here |
 | `AppEvent` — `src/state/types.rs` L268–346 | All preserved; new issues variants appended |
