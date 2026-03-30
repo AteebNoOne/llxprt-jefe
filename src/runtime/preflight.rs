@@ -55,7 +55,7 @@ impl PreflightIssue {
                 .to_owned(),
             Self::UnsupportedEngine { engine, platform } => {
                 format!(
-                    "{} is not supported on {}. The engine will be changed to Podman.\n\n\
+                    "{} is not supported on {}. Switch to Podman?\n\n\
                      [Enter] switch to Podman  |  [Esc] cancel launch",
                     engine.label(),
                     platform,
@@ -182,7 +182,10 @@ pub fn sandbox_preflight(engine: SandboxEngine) -> Option<PreflightIssue> {
 /// Execute the remediation action. Returns Ok(()) on success or an error message.
 pub fn execute_preflight_action(action: &PreflightAction) -> Result<(), String> {
     match action {
-        PreflightAction::SwitchToPodman => Ok(()),
+        PreflightAction::SwitchToPodman => Err(
+            "SwitchToPodman requires caller state updates; handle this action at the call site."
+                .to_owned(),
+        ),
         PreflightAction::StartContainerRuntime { command, .. } => {
             if command.is_empty() {
                 return Ok(());
@@ -370,9 +373,9 @@ mod tests {
     }
 
     #[test]
-    fn execute_switch_to_podman_action_succeeds() {
+    fn execute_switch_to_podman_action_requires_caller_state_handling() {
         let result = execute_preflight_action(&PreflightAction::SwitchToPodman);
-        assert!(result.is_ok());
+        assert!(result.is_err());
     }
 
     #[test]

@@ -5,6 +5,7 @@ use tracing::warn;
 
 use jefe::domain::{
     Agent, AgentId, AgentStatus, LaunchSignature, PlatformCapabilities, RemoteRepositorySettings,
+    SandboxEngine,
 };
 use jefe::persistence::{PersistenceManager, Settings, State as PersistedState};
 use jefe::runtime::{RuntimeError, RuntimeManager, RuntimeSession, platform_engine_diagnostic};
@@ -46,7 +47,9 @@ fn normalize_persisted_sandbox_engines(state: &mut AppState) -> bool {
                 platform = caps.platform_label(),
                 "persisted sandbox engine not supported on this platform, normalizing to Podman"
             );
-            agent.sandbox_engine = caps.normalize_engine(agent.sandbox_engine);
+            agent.sandbox_engine = caps
+                .normalize_engine(agent.sandbox_engine)
+                .unwrap_or(SandboxEngine::Podman);
             normalized_agent_count += 1;
         }
     }

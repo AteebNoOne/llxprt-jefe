@@ -816,7 +816,7 @@ impl AppState {
 
         let caps = PlatformCapabilities::current();
         let sandbox_engine = SandboxEngine::from_form_value(&fields.sandbox_engine)
-            .map(|engine| caps.normalize_engine(engine))
+            .and_then(|engine| caps.normalize_engine(engine))
             .unwrap_or_default();
 
         Some(Agent {
@@ -877,7 +877,7 @@ impl AppState {
         agent.sandbox_enabled = fields.sandbox_enabled;
         let caps = PlatformCapabilities::current();
         agent.sandbox_engine = SandboxEngine::from_form_value(&fields.sandbox_engine)
-            .map(|engine| caps.normalize_engine(engine))
+            .and_then(|engine| caps.normalize_engine(engine))
             .unwrap_or_default();
         agent.sandbox_flags = normalize_sandbox_flags(&fields.sandbox_flags);
     }

@@ -141,17 +141,16 @@ impl PlatformCapabilities {
         }
     }
 
-    /// If `engine` is unsupported, return a safe fallback.
+    /// If `engine` is unsupported, return the first supported fallback.
+    ///
+    /// Returns `None` when this platform supports no sandbox engines.
     #[must_use]
-    pub fn normalize_engine(&self, engine: SandboxEngine) -> SandboxEngine {
+    pub fn normalize_engine(&self, engine: SandboxEngine) -> Option<SandboxEngine> {
         if self.is_engine_supported(engine) {
-            return engine;
+            return Some(engine);
         }
 
-        self.supported_engines()
-            .first()
-            .copied()
-            .unwrap_or(SandboxEngine::Podman)
+        self.supported_engines().first().copied()
     }
 
     /// Short human-readable platform description for diagnostics.
@@ -445,12 +444,9 @@ mod tests {
     }
 
     #[test]
-    fn normalize_engine_falls_back_to_default_when_platform_has_no_supported_engines() {
+    fn normalize_engine_returns_none_when_platform_has_no_supported_engines() {
         let caps = PlatformCapabilities::for_os("windows");
-        assert_eq!(
-            caps.normalize_engine(SandboxEngine::Seatbelt),
-            SandboxEngine::Podman
-        );
+        assert_eq!(caps.normalize_engine(SandboxEngine::Seatbelt), None);
     }
 
     #[test]
@@ -467,11 +463,11 @@ mod tests {
         let caps = PlatformCapabilities::for_os("linux");
         assert_eq!(
             caps.normalize_engine(SandboxEngine::Seatbelt),
-            SandboxEngine::Podman
+            Some(SandboxEngine::Podman)
         );
         assert_eq!(
             caps.normalize_engine(SandboxEngine::Docker),
-            SandboxEngine::Docker
+            Some(SandboxEngine::Docker)
         );
     }
 
@@ -480,7 +476,7 @@ mod tests {
         let caps = PlatformCapabilities::for_os("macos");
         assert_eq!(
             caps.normalize_engine(SandboxEngine::Seatbelt),
-            SandboxEngine::Seatbelt
+            Some(SandboxEngine::Seatbelt)
         );
     }
 
