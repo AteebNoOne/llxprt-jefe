@@ -386,8 +386,17 @@ mod tests {
             diag.contains("Supported sandbox engines:"),
             "should contain engine list"
         );
-        // Podman and Docker should always appear.
-        assert!(diag.contains("Podman"));
-        assert!(diag.contains("Docker"));
+
+        let supported = PlatformCapabilities::current().supported_engines();
+        for engine in &supported {
+            assert!(diag.contains(engine.label()));
+        }
+
+        if supported.is_empty() {
+            assert!(
+                diag.ends_with("Supported sandbox engines: "),
+                "diagnostic should show an empty engine list on unsupported platforms"
+            );
+        }
     }
 }
