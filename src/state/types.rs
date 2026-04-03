@@ -375,6 +375,8 @@ pub struct IssuesState {
     pub error: Option<String>,
     pub issue_focus: IssueFocus,
     pub detail_subfocus: DetailSubfocus,
+    /// Scroll offset (in lines) for the detail pane viewport.
+    pub detail_scroll_offset: usize,
     pub inline_state: InlineState,
     pub agent_chooser: Option<AgentChooserState>,
     pub filter_controls_open: bool,
@@ -473,6 +475,8 @@ pub enum AppEvent {
     IssuesCycleFocusReverse,
     IssuesScrollDetailUp,
     IssuesScrollDetailDown,
+    IssuesScrollDetailPageUp,
+    IssuesScrollDetailPageDown,
     IssueDetailSubfocusNext,
     IssueDetailSubfocusPrev,
 

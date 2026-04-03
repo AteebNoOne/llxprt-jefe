@@ -9,43 +9,162 @@ use crate::domain::{IssueDetail, IssueState};
 use crate::state::{DetailSubfocus, InlineState};
 use crate::theme::{ResolvedColors, ThemeColors};
 
-/// Insert a caret character at the given cursor position in the text.
-/// Uses the theme's bright color caret (▏) consistent with form field editing.
+use super::scrollable_text::ScrollableText;
+
+/// Insert a caret character at the given byte-offset cursor position in the text.
+/// Uses the bright color caret (▏) consistent with form field editing.
+/// The `cursor` parameter is a byte offset (matching the state representation).
 fn render_text_with_caret(value: &str, cursor: usize) -> String {
-    let char_len = value.chars().count();
-    let clamped = cursor.min(char_len);
-
-    let byte_idx = if clamped == 0 {
-        0
+    let byte_idx = cursor.min(value.len());
+    // Ensure we're at a char boundary
+    let byte_idx = if byte_idx == 0 || byte_idx >= value.len() {
+        byte_idx
     } else {
-        value
+        // Snap to nearest char boundary at or before byte_idx
+        value[..byte_idx]
             .char_indices()
-            .nth(clamped)
-            .map_or_else(|| value.len(), |(idx, _)| idx)
+            .last()
+            .map_or(0, |(i, c)| i + c.len_utf8())
     };
-
     format!("{}▏{}", &value[..byte_idx], &value[byte_idx..])
 }
 
-/// Maximum visible lines for body/comment text before truncation.
-const MAX_BODY_LINES: usize = 20;
-/// Maximum visible lines for a single comment body.
-const MAX_COMMENT_LINES: usize = 12;
+/// Build the scrollable content string for the body + comments + new-comment area.
+/// This is rendered through the ScrollableText component so it never expands layout.
+#[allow(clippy::too_many_lines)]
+fn build_detail_content(
+    detail: &IssueDetail,
+    subfocus: DetailSubfocus,
+    inline_state: &InlineState,
+    comments_loading: bool,
+) -> String {
+    let nl = String::from(char::from(0x0Au8));
+    let mut lines: Vec<String> = Vec::new();
 
-/// Split text into lines, truncating to `max_lines` and appending an indicator if needed.
-fn truncate_lines(text: &str, max_lines: usize) -> Vec<String> {
-    let lines: Vec<&str> = text.lines().collect();
-    if lines.len() <= max_lines {
-        lines.iter().map(|s| (*s).to_string()).collect()
-    } else {
-        let mut result: Vec<String> = lines[..max_lines]
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect();
-        let remaining = lines.len() - max_lines;
-        result.push(format!("... ({remaining} more lines)"));
-        result
+    // ── Body section ────────────────────────────────────────────────
+    let body_focused = subfocus == DetailSubfocus::Body;
+    let body_label = if body_focused { "> Body" } else { "  Body" };
+    lines.push(body_label.to_string());
+
+    let (body_text, body_editing) = match inline_state {
+        InlineState::Editor {
+            target: crate::state::EditorTarget::IssueBody,
+            text,
+            cursor,
+        } => (render_text_with_caret(text, *cursor), true),
+        _ => (detail.body.clone(), false),
+    };
+
+    if body_editing {
+        lines.push("[editing]".to_string());
     }
+    for line in body_text.lines() {
+        let prefix = if body_editing { "  │ " } else { "    " };
+        lines.push(format!("{prefix}{line}"));
+    }
+    if body_text.is_empty() {
+        let prefix = if body_editing { "  │ " } else { "    " };
+        lines.push(format!("{prefix}(empty)"));
+    }
+    if body_editing {
+        lines.push("  Ctrl+Enter save | Esc cancel".to_string());
+    }
+
+    lines.push("─────────────────────────────────────────".to_string());
+
+    // ── Comments section ────────────────────────────────────────────
+    lines.push("Comments".to_string());
+    if comments_loading {
+        lines.push("  Loading comments...".to_string());
+    } else if detail.comments.is_empty() {
+        lines.push("  No comments yet.".to_string());
+    } else {
+        for (idx, comment) in detail.comments.iter().enumerate() {
+            let comment_focused = subfocus == DetailSubfocus::Comment(idx);
+            let prefix = if comment_focused { "> " } else { "  " };
+            lines.push(format!(
+                "{}@{}  {}",
+                prefix, comment.author_login, comment.created_at
+            ));
+
+            // Check for editor targeting this comment
+            let (cmt_text, cmt_editing) = match inline_state {
+                InlineState::Editor {
+                    target: crate::state::EditorTarget::Comment { comment_index },
+                    text,
+                    cursor,
+                } if *comment_index == idx => (render_text_with_caret(text, *cursor), true),
+                _ => (comment.body.clone(), false),
+            };
+
+            if cmt_editing {
+                lines.push("  [editing]".to_string());
+            }
+            for line in cmt_text.lines() {
+                let prefix = if cmt_editing { "    │ " } else { "      " };
+                lines.push(format!("{prefix}{line}"));
+            }
+            if cmt_text.is_empty() {
+                let prefix = if cmt_editing { "    │ " } else { "      " };
+                lines.push(format!("{prefix}(empty)"));
+            }
+            if cmt_editing {
+                lines.push("    Ctrl+Enter save | Esc cancel".to_string());
+            }
+
+            // Check for reply composer
+            if let InlineState::Composer {
+                target: crate::state::ComposerTarget::Reply { comment_index, .. },
+                text,
+                cursor,
+            } = inline_state
+                && *comment_index == idx
+            {
+                lines.push("    [Reply]".to_string());
+                let reply_text = render_text_with_caret(text, *cursor);
+                for line in reply_text.lines() {
+                    lines.push(format!("    │ {line}"));
+                }
+                if reply_text.is_empty() {
+                    lines.push("    │ ".to_string());
+                }
+                lines.push("    Ctrl+Enter save | Esc cancel".to_string());
+            }
+
+            lines.push(String::new()); // blank line between comments
+        }
+    }
+
+    lines.push("─────────────────────────────────────────".to_string());
+
+    // ── New Comment section ─────────────────────────────────────────
+    let nc_focused = subfocus == DetailSubfocus::NewComment;
+    let nc_label = if nc_focused {
+        "> New Comment"
+    } else {
+        "  New Comment"
+    };
+    lines.push(nc_label.to_string());
+
+    if let InlineState::Composer {
+        target: crate::state::ComposerTarget::NewComment,
+        text,
+        cursor,
+    } = inline_state
+    {
+        let composer_text = render_text_with_caret(text, *cursor);
+        for line in composer_text.lines() {
+            lines.push(format!("  │ {line}"));
+        }
+        if composer_text.is_empty() {
+            lines.push("  │ ".to_string());
+        }
+        lines.push("  Ctrl+Enter submit | Esc cancel".to_string());
+    } else {
+        lines.push("  Press c to add a comment".to_string());
+    }
+
+    lines.join(&nl)
 }
 
 /// Props for the issue detail view.
@@ -61,11 +180,13 @@ pub struct IssueDetailViewProps {
     pub comments_loading: bool,
     /// Whether this pane is focused.
     pub focused: bool,
+    /// Scroll offset for the content viewport.
+    pub scroll_offset: usize,
     /// Theme colors.
     pub colors: ThemeColors,
 }
 
-/// Issue detail view — unified scrollable: metadata → body → comments → new comment field.
+/// Issue detail view — fixed metadata header + scrollable body/comments viewport.
 /// @plan PLAN-20260329-ISSUES-MODE.P14
 /// @requirement REQ-ISS-009
 #[component]
@@ -103,7 +224,6 @@ pub fn IssueDetailView(props: &IssueDetailViewProps) -> impl Into<AnyElement<'st
         IssueState::Closed => rc.dim,
     };
 
-    // Build labels/assignees/milestone display strings
     let labels_str = if detail.labels.is_empty() {
         "-".to_string()
     } else {
@@ -116,26 +236,13 @@ pub fn IssueDetailView(props: &IssueDetailViewProps) -> impl Into<AnyElement<'st
     };
     let milestone_str = detail.milestone.as_deref().unwrap_or("-").to_string();
 
-    // Determine body display: active editor replaces body text
-    let body_focused = props.detail_subfocus == DetailSubfocus::Body;
-    let (body_display, body_editing) = match &props.inline_state {
-        InlineState::Editor {
-            target: crate::state::EditorTarget::IssueBody,
-            text,
-            cursor,
-        } => (render_text_with_caret(text, *cursor), true),
-        _ => (detail.body.clone(), false),
-    };
-
-    // Build inline composer text if a new-comment composer is active
-    let (composer_text, composer_active) = match &props.inline_state {
-        InlineState::Composer {
-            target: crate::state::ComposerTarget::NewComment,
-            text,
-            cursor,
-        } => (render_text_with_caret(text, *cursor), true),
-        _ => (String::new(), false),
-    };
+    // Build the scrollable content for body + comments
+    let content = build_detail_content(
+        detail,
+        props.detail_subfocus,
+        &props.inline_state,
+        props.comments_loading,
+    );
 
     element! {
         Box(
@@ -146,19 +253,16 @@ pub fn IssueDetailView(props: &IssueDetailViewProps) -> impl Into<AnyElement<'st
             border_color: rc.border,
             background_color: rc.bg,
         ) {
-            // ── Metadata header ─────────────────────────────────────────────
+            // ── Metadata header (fixed height) ──────────────────────────────
             Box(flex_direction: FlexDirection::Column, padding_left: 1u32, padding_right: 1u32) {
-                // Title line
                 Box(height: 1u32) {
                     Text(
                         content: format!("#{} {}", detail.number, detail.title),
-                        weight: Weight::Bold,
                         color: rc.fg,
                     )
                 }
-                // State + author + dates
                 Box(height: 1u32) {
-                    Text(content: state_tag, color: state_color, weight: Weight::Bold)
+                    Text(content: state_tag, color: state_color)
                     Text(
                         content: format!(
                             "  by @{}  opened: {}  updated: {}",
@@ -167,7 +271,6 @@ pub fn IssueDetailView(props: &IssueDetailViewProps) -> impl Into<AnyElement<'st
                         color: rc.dim,
                     )
                 }
-                // Labels / assignees / milestone
                 Box(height: 1u32) {
                     Text(content: "labels: ", color: rc.dim)
                     Text(content: labels_str, color: rc.fg)
@@ -176,11 +279,9 @@ pub fn IssueDetailView(props: &IssueDetailViewProps) -> impl Into<AnyElement<'st
                     Text(content: "  milestone: ", color: rc.dim)
                     Text(content: milestone_str, color: rc.fg)
                 }
-                // URL
                 Box(height: 1u32) {
                     Text(content: detail.external_url.clone(), color: rc.dim)
                 }
-                // Separator
                 Box(height: 1u32) {
                     Text(
                         content: "─────────────────────────────────────────",
@@ -189,224 +290,15 @@ pub fn IssueDetailView(props: &IssueDetailViewProps) -> impl Into<AnyElement<'st
                 }
             }
 
-            // ── Body ─────────────────────────────────────────────────────────
-            Box(flex_direction: FlexDirection::Column, padding_left: 1u32, padding_right: 1u32) {
-                Box(height: 1u32) {
-                    Text(
-                        content: if body_focused { "> Body" } else { "  Body" },
-                        color: if body_focused { rc.bright } else { rc.fg },
-                        weight: Weight::Bold,
-                    )
-                }
-                #({
-                    let lines = truncate_lines(&body_display, MAX_BODY_LINES);
-                    let mut elems = Vec::new();
-                    if body_editing {
-                        for line in &lines {
-                            elems.push(element! {
-                                Box(
-                                    height: 1u32,
-                                    border_color: rc.bright,
-                                    padding_left: 1u32,
-                                    padding_right: 1u32,
-                                ) {
-                                    Text(content: line.clone(), color: rc.fg)
-                                }
-                            });
-                        }
-                        elems.push(element! {
-                            Box(height: 1u32) {
-                                Text(content: "  Ctrl+Enter save | Esc cancel".to_string(), color: rc.dim)
-                            }
-                        });
-                    } else {
-                        for line in &lines {
-                            elems.push(element! {
-                                Box(height: 1u32, padding_left: 2u32, padding_right: 1u32) {
-                                    Text(content: line.clone(), color: rc.fg)
-                                }
-                            });
-                        }
-                    }
-                    elems
-                })
-                Box(height: 1u32) {
-                    Text(
-                        content: "─────────────────────────────────────────",
-                        color: rc.dim,
-                    )
-                }
-            }
-
-            // ── Comments ──────────────────────────────────────────────────────
-            Box(flex_direction: FlexDirection::Column, padding_left: 1u32, padding_right: 1u32) {
-                Box(height: 1u32) {
-                    Text(content: "Comments", weight: Weight::Bold, color: rc.fg)
-                }
-                #(if props.comments_loading {
-                    vec![element! {
-                        Box(height: 1u32, padding_left: 1u32) {
-                            Text(content: "Loading comments...", color: rc.dim)
-                        }
-                    }]
-                } else if detail.comments.is_empty() {
-                    vec![element! {
-                        Box(height: 1u32, padding_left: 1u32) {
-                            Text(content: "No comments yet.", color: rc.dim)
-                        }
-                    }]
-                } else {
-                    detail.comments.iter().enumerate().map(|(idx, comment)| {
-                        let comment_focused = props.detail_subfocus == DetailSubfocus::Comment(idx);
-
-                        // Check for reply composer targeting this comment
-                        let (reply_text, reply_active) = match &props.inline_state {
-                            InlineState::Composer {
-                                target: crate::state::ComposerTarget::Reply { comment_index, .. },
-                                text,
-                                cursor,
-                            } if *comment_index == idx => (render_text_with_caret(text, *cursor), true),
-                            _ => (String::new(), false),
-                        };
-
-                        // Check for editor targeting this comment
-                        let (edit_text, edit_active) = match &props.inline_state {
-                            InlineState::Editor {
-                                target: crate::state::EditorTarget::Comment { comment_index },
-                                text,
-                                cursor,
-                            } if *comment_index == idx => (render_text_with_caret(text, *cursor), true),
-                            _ => (String::new(), false),
-                        };
-
-                        let prefix = if comment_focused { "> " } else { "  " };
-                        let author_line = format!(
-                            "{}@{}  {}",
-                            prefix, comment.author_login, comment.created_at
-                        );
-
-                        element! {
-                            Box(flex_direction: FlexDirection::Column, padding_bottom: 1u32) {
-                                Box(height: 1u32) {
-                                    Text(
-                                        content: author_line,
-                                        color: if comment_focused { rc.bright } else { rc.dim },
-                                        weight: if comment_focused { Weight::Bold } else { Weight::Normal },
-                                    )
-                                }
-                                #({
-                                    let mut cmt_elems = Vec::new();
-                                    if edit_active {
-                                        let edit_lines = truncate_lines(&edit_text, MAX_COMMENT_LINES);
-                                        for line in &edit_lines {
-                                            cmt_elems.push(element! {
-                                                Box(
-                                                    height: 1u32,
-                                                    border_color: rc.bright,
-                                                    padding_left: 1u32,
-                                                    padding_right: 1u32,
-                                                ) {
-                                                    Text(content: line.clone(), color: rc.fg)
-                                                }
-                                            });
-                                        }
-                                        cmt_elems.push(element! {
-                                            Box(height: 1u32) {
-                                                Text(content: "  Ctrl+Enter save | Esc cancel".to_string(), color: rc.dim)
-                                            }
-                                        });
-                                    } else {
-                                        let cmt_lines = truncate_lines(&comment.body, MAX_COMMENT_LINES);
-                                        for line in &cmt_lines {
-                                            cmt_elems.push(element! {
-                                                Box(height: 1u32, padding_left: 4u32, padding_right: 1u32) {
-                                                    Text(content: line.clone(), color: rc.fg)
-                                                }
-                                            });
-                                        }
-                                    }
-                                    cmt_elems
-                                })
-                                #(if reply_active {
-                                    vec![
-                                        element! {
-                                            Box(height: 1u32, padding_left: 4u32) {
-                                                Text(content: "[Reply]", color: rc.bright)
-                                            }
-                                        },
-                                        element! {
-                                            Box(
-                                                border_style: BorderStyle::Round,
-                                                border_color: rc.bright,
-                                                padding_left: 1u32,
-                                                padding_right: 1u32,
-                                                margin_left: 4u32,
-                                                width: 100pct,
-                                            ) {
-                                                Text(content: reply_text.clone(), color: rc.fg)
-                                            }
-                                        },
-                                        element! {
-                                            Box(height: 1u32, padding_left: 4u32) {
-                                                Text(content: "Ctrl+Enter save | Esc cancel", color: rc.dim)
-                                            }
-                                        },
-                                    ]
-                                } else {
-                                    vec![]
-                                })
-                            }
-                        }
-                    }).collect()
-                })
-            }
-
-            // ── New Comment field ─────────────────────────────────────────────
-            Box(flex_direction: FlexDirection::Column, padding_left: 1u32, padding_right: 1u32) {
-                Box(height: 1u32) {
-                    Text(
-                        content: if props.detail_subfocus == DetailSubfocus::NewComment {
-                            "> New Comment"
-                        } else {
-                            "  New Comment"
-                        },
-                        color: if props.detail_subfocus == DetailSubfocus::NewComment {
-                            rc.bright
-                        } else {
-                            rc.fg
-                        },
-                        weight: Weight::Bold,
-                    )
-                }
-                #(if composer_active {
-                    vec![
-                        element! {
-                            Box(
-                                border_style: BorderStyle::Round,
-                                border_color: rc.bright,
-                                padding_left: 1u32,
-                                padding_right: 1u32,
-                                width: 100pct,
-                            ) {
-                                Text(content: composer_text, color: rc.fg)
-                            }
-                        },
-                        element! {
-                            Box(height: 1u32) {
-                                Text(content: "  Ctrl+Enter submit | Esc cancel", color: rc.dim)
-                            }
-                        },
-                    ]
-                } else {
-                    vec![element! {
-                        Box(height: 1u32, padding_left: 2u32) {
-                            Text(
-                                content: "Press c to add a comment",
-                                color: rc.dim,
-                            )
-                        }
-                    }]
-                })
+            // ── Scrollable body + comments viewport (fills remaining) ───────
+            Box(flex_grow: 1.0, width: 100pct, padding_left: 1u32) {
+                ScrollableText(
+                    content: content,
+                    scroll_offset: props.scroll_offset,
+                    color: rc.fg,
+                    track_color: rc.dim,
+                    thumb_color: rc.bright,
+                )
             }
         }
     }

@@ -57,7 +57,17 @@ fn inline_cursor_vertical(text: &str, cursor: &mut usize, direction: i32) {
     };
 
     let target_len = target_end - target_start;
-    *cursor = target_start + col.min(target_len);
+    let raw_pos = target_start + col.min(target_len);
+    // Snap to nearest char boundary at or before raw_pos.
+    // Use char end positions (start + len) since cursor can sit after the last char.
+    let target_slice = &text[target_start..target_end];
+    let snapped = target_slice
+        .char_indices()
+        .map(|(i, c)| target_start + i + c.len_utf8())
+        .take_while(|end_pos| *end_pos <= raw_pos)
+        .last()
+        .unwrap_or(target_start);
+    *cursor = snapped.min(target_end);
 }
 
 impl AppState {
@@ -673,14 +683,28 @@ impl AppState {
                 debug!(old = ?old, new = ?self.pane_focus, "pane focus changed (left)");
             }
 
-            // No-op events (handled elsewhere or reserved; scroll state managed by UI layer)
+            // No-op events (handled elsewhere or reserved)
             AppEvent::PersistenceSaveSuccess
             | AppEvent::SetTheme(_)
             | AppEvent::Quit
-            | AppEvent::IssuesScrollDetailUp
-            | AppEvent::IssuesScrollDetailDown
             | AppEvent::ApplySearch
             | AppEvent::InlineSubmit => {}
+
+            // Scroll detail pane viewport
+            AppEvent::IssuesScrollDetailUp => {
+                self.issues_state.detail_scroll_offset =
+                    self.issues_state.detail_scroll_offset.saturating_sub(1);
+            }
+            AppEvent::IssuesScrollDetailDown => {
+                self.issues_state.detail_scroll_offset += 1;
+            }
+            AppEvent::IssuesScrollDetailPageUp => {
+                self.issues_state.detail_scroll_offset =
+                    self.issues_state.detail_scroll_offset.saturating_sub(10);
+            }
+            AppEvent::IssuesScrollDetailPageDown => {
+                self.issues_state.detail_scroll_offset += 10;
+            }
 
             // Issues Mode events — P05 Domain + State Implementation
             // @plan PLAN-20260329-ISSUES-MODE.P05
@@ -993,6 +1017,7 @@ impl AppState {
                     self.issues_state.issue_detail = Some(*detail);
                     self.issues_state.detail_loading = false;
                     self.issues_state.detail_subfocus = DetailSubfocus::Body;
+                    self.issues_state.detail_scroll_offset = 0;
                 }
             }
 

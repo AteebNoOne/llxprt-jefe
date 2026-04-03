@@ -142,6 +142,8 @@ pub fn resolve_issues_key_event(state: &AppState, key_event: &KeyEvent) -> Optio
         IssueFocus::IssueDetail => match key_event.code {
             KeyCode::Up => return Some(AppEvent::IssuesScrollDetailUp),
             KeyCode::Down => return Some(AppEvent::IssuesScrollDetailDown),
+            KeyCode::PageUp => return Some(AppEvent::IssuesScrollDetailPageUp),
+            KeyCode::PageDown => return Some(AppEvent::IssuesScrollDetailPageDown),
             KeyCode::Char('e') => {
                 return match state.issues_state.detail_subfocus {
                     DetailSubfocus::Body => Some(AppEvent::OpenInlineEditor {

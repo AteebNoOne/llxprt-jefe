@@ -72,6 +72,7 @@ pub fn IssuesScreen(props: &IssuesScreenProps) -> impl Into<AnyElement<'static>>
     let detail_subfocus = state.map_or_else(Default::default, |s| s.issues_state.detail_subfocus);
     let inline_state = state.map_or_else(Default::default, |s| s.issues_state.inline_state.clone());
     let comments_loading = state.is_some_and(|s| s.issues_state.comments_loading);
+    let detail_scroll_offset = state.map_or(0, |s| s.issues_state.detail_scroll_offset);
     let detail_focused = issue_focus == IssueFocus::IssueDetail;
 
     // Error message
@@ -161,65 +162,29 @@ pub fn IssuesScreen(props: &IssuesScreenProps) -> impl Into<AnyElement<'static>>
                     })
 
                     // Issue list + detail (split view)
-                    #(if detail_focused {
-                        // When detail focused: compact list (30%) + detail (70%)
-                        vec![
-                            element! {
-                                Box(height: 30pct, width: 100pct) {
-                                    IssueList(
-                                        issues: issues.clone(),
-                                        selected_index: selected_issue_idx,
-                                        focused: false,
-                                        loading: list_loading,
-                                        has_filters: has_filters,
-                                        compact: true,
-                                        colors: colors.clone(),
-                                    )
-                                }
-                            },
-                            element! {
-                                Box(flex_grow: 1.0, width: 100pct) {
-                                    IssueDetailView(
-                                        issue_detail: issue_detail.clone(),
-                                        detail_subfocus: detail_subfocus,
-                                        inline_state: inline_state.clone(),
-                                        comments_loading: comments_loading,
-                                        focused: true,
-                                        colors: colors.clone(),
-                                    )
-                                }
-                            },
-                        ]
-                    } else {
-                        // When list focused: list (50%) + detail preview (50%)
-                        vec![
-                            element! {
-                                Box(height: 50pct, width: 100pct) {
-                                    IssueList(
-                                        issues: issues.clone(),
-                                        selected_index: selected_issue_idx,
-                                        focused: list_focused,
-                                        loading: list_loading,
-                                        has_filters: has_filters,
-                                        compact: false,
-                                        colors: colors.clone(),
-                                    )
-                                }
-                            },
-                            element! {
-                                Box(flex_grow: 1.0, width: 100pct) {
-                                    IssueDetailView(
-                                        issue_detail: issue_detail.clone(),
-                                        detail_subfocus: detail_subfocus,
-                                        inline_state: inline_state.clone(),
-                                        comments_loading: comments_loading,
-                                        focused: false,
-                                        colors: colors.clone(),
-                                    )
-                                }
-                            },
-                        ]
-                    })
+                    // Fixed 30/70 split: compact issue list + detail view
+                    Box(height: 30pct, width: 100pct) {
+                        IssueList(
+                            issues: issues.clone(),
+                            selected_index: selected_issue_idx,
+                            focused: list_focused,
+                            loading: list_loading,
+                            has_filters: has_filters,
+                            compact: true,
+                            colors: colors.clone(),
+                        )
+                    }
+                    Box(flex_grow: 1.0, width: 100pct) {
+                        IssueDetailView(
+                            issue_detail: issue_detail.clone(),
+                            detail_subfocus: detail_subfocus,
+                            inline_state: inline_state.clone(),
+                            comments_loading: comments_loading,
+                            focused: detail_focused,
+                            scroll_offset: detail_scroll_offset,
+                            colors: colors.clone(),
+                        )
+                    }
 
                     // Agent chooser overlay (anchored inside workspace)
                     #(if chooser_visible {
