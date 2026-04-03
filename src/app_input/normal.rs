@@ -73,6 +73,13 @@ pub fn handle_normal_key_event(
     let selected_agent_id = state_ro.selected_agent().map(|agent| agent.id.clone());
     drop(state_ro);
 
+    // Issues mode routing — route to issues handler when in DashboardIssues
+    // @plan PLAN-20260329-ISSUES-MODE.P09
+    // @requirement REQ-ISS-002
+    if screen_mode == ScreenMode::DashboardIssues {
+        return super::issues::handle_issues_mode_key(&*app_state, ctx, key_event);
+    }
+
     match key_event.code {
         // Quit
         KeyCode::Char('q' | 'Q') => {
@@ -143,6 +150,14 @@ pub fn handle_normal_key_event(
 
         // Relaunch agent
         KeyCode::Char('l' | 'L') => selected_agent_id.clone().map(AppEvent::RelaunchAgent),
+
+        // Issues mode entry
+        // @plan PLAN-20260329-ISSUES-MODE.P11
+        // @requirement REQ-ISS-001
+        // @pseudocode component-003 lines 01-02
+        KeyCode::Char('i') if screen_mode == ScreenMode::Dashboard => {
+            Some(AppEvent::EnterIssuesMode)
+        }
 
         // Split mode
         KeyCode::Char('s' | 'S') if screen_mode == ScreenMode::Dashboard => {

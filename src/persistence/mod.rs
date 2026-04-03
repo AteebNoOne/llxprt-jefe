@@ -466,4 +466,87 @@ mod tests {
         // Cleanup
         let _ = std::fs::remove_dir_all(temp.parent().unwrap().parent().unwrap());
     }
+
+    /// Test P13-1: State with repo having issue_base_prompt round-trips through JSON serialization.
+    ///
+    /// @plan PLAN-20260329-ISSUES-MODE.P13
+    /// @requirement REQ-ISS-012
+    #[test]
+    fn test_issue_base_prompt_state_round_trip() {
+        use crate::domain::{RemoteRepositorySettings, Repository, RepositoryId};
+        use std::path::PathBuf;
+
+        let repo = Repository {
+            id: RepositoryId("repo-issues".to_string()),
+            name: "Issues Repo".to_string(),
+            slug: "issues-repo".to_string(),
+            base_dir: PathBuf::from("/tmp/issues-repo"),
+            default_profile: String::new(),
+            remote: RemoteRepositorySettings::default(),
+            issue_base_prompt: "Always reproduce the bug first".to_string(),
+            agent_ids: vec![],
+        };
+
+        let state = State {
+            schema_version: STATE_SCHEMA_VERSION,
+            repositories: vec![repo],
+            agents: vec![],
+            selected_repository_index: Some(0),
+            selected_agent_index: None,
+            hide_idle_repositories: false,
+            last_selected_agent_by_repo: vec![],
+        };
+
+        let temp = std::env::temp_dir().join("jefe_test_p13_issue_base_prompt_roundtrip");
+        let _ = std::fs::remove_dir_all(&temp);
+        let paths = PersistencePaths {
+            settings_path: temp.join("settings.toml"),
+            state_path: temp.join("state.json"),
+        };
+        let mgr = FilePersistenceManager::with_paths(paths);
+
+        mgr.save_state(&state).expect("should save state");
+        let loaded = mgr.load_state().expect("should load state");
+
+        assert_eq!(loaded.repositories.len(), 1);
+        assert_eq!(
+            loaded.repositories[0].issue_base_prompt,
+            "Always reproduce the bug first"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    /// Test P13-2: Deserializing legacy JSON without issue_base_prompt defaults to empty string.
+    ///
+    /// @plan PLAN-20260329-ISSUES-MODE.P13
+    /// @requirement REQ-ISS-012
+    #[test]
+    fn test_issue_base_prompt_state_backward_compat() {
+        // Simulate legacy JSON that predates the issue_base_prompt field
+        let legacy_json = serde_json::json!({
+            "schema_version": 1,
+            "repositories": [
+                {
+                    "id": "repo-legacy",
+                    "name": "Legacy Repo",
+                    "slug": "legacy-repo",
+                    "base_dir": "/tmp/legacy-repo",
+                    "default_profile": "",
+                    "agent_ids": []
+                    // Note: no issue_base_prompt field
+                }
+            ],
+            "agents": [],
+            "selected_repository_index": null,
+            "selected_agent_index": null
+        });
+
+        let state: State =
+            serde_json::from_value(legacy_json).expect("legacy JSON should deserialize");
+
+        assert_eq!(state.repositories.len(), 1);
+        // Must default to empty string, not error
+        assert_eq!(state.repositories[0].issue_base_prompt, "");
+    }
 }

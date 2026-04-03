@@ -1,6 +1,7 @@
 //! Keybind bar component - bottom bar with keyboard shortcuts.
 //!
 //! @plan PLAN-20260216-FIRSTVERSION-V1.P09
+//! @plan PLAN-20260329-ISSUES-MODE.P14
 //! @requirement REQ-FUNC-008
 
 use iocraft::prelude::*;
@@ -29,9 +30,12 @@ pub fn KeybindBar(props: &KeybindBarProps) -> impl Into<AnyElement<'static>> {
     } else {
         match props.screen_mode {
             ScreenMode::Dashboard => {
-                "^/v navigate | </> pane | t/f12 terminal focus | v active-repos | ⌥1-9 jump agent | n new-agent | N new-repo | ctrl-d delete | ctrl-k kill | l relaunch | s split | ? help | q quit"
+                "^/v navigate | </> pane | t/f12 terminal focus | v active-repos | \u{2325}1-9 jump agent | n new-agent | N new-repo | ctrl-d delete | ctrl-k kill | l relaunch | s split | ? help | q quit"
             }
             ScreenMode::Split => "^/v select | g grab | m move | Esc back | ? help",
+            ScreenMode::DashboardIssues => {
+                "^/v navigate | Enter open detail | f filter | / search | Tab cycle focus | i issue list | r repos | S send-to-agent | e edit | c comment | a exit issues | Esc back/exit"
+            }
         }
     };
 

@@ -100,6 +100,8 @@ struct AppContext {
     persistence: jefe::persistence::FilePersistenceManager,
     theme_manager: FileThemeManager,
     runtime: TmuxRuntimeManager,
+    /// @plan PLAN-20260329-ISSUES-MODE.P09
+    gh_client: jefe::github::GhClient,
 }
 
 /// Delete the currently selected repository from state.
@@ -556,7 +558,14 @@ fn App(mut hooks: Hooks, props: &AppProps) -> impl Into<AnyElement<'static>> {
                                 return;
                             }
                         }
-                        InputMode::TerminalCapture | InputMode::Normal => {}
+                        // @plan PLAN-20260329-ISSUES-MODE.P03
+                        InputMode::TerminalCapture
+                        | InputMode::Normal
+                        | InputMode::IssuesNormal
+                        | InputMode::IssuesInline
+                        | InputMode::IssuesSearch
+                        | InputMode::IssuesFilter
+                        | InputMode::IssuesChooser => {}
                     }
 
                     if let Some(evt) = handle_normal_key_event(
@@ -750,6 +759,17 @@ fn App(mut hooks: Hooks, props: &AppProps) -> impl Into<AnyElement<'static>> {
             )
         }
         .into_any(),
+        // Issues mode placeholder — will be implemented in later phases
+        // @plan PLAN-20260329-ISSUES-MODE.P03
+        ScreenMode::DashboardIssues => element! {
+            Dashboard(
+                state: Some(snapshot.clone()),
+                colors: Some(colors.clone()),
+                theme_name: theme_name.clone(),
+                terminal_snapshot: terminal_snapshot,
+            )
+        }
+        .into_any(),
     };
 
     let confirm_modal_data = match &modal {
@@ -899,6 +919,7 @@ fn main() {
         persistence,
         theme_manager,
         runtime,
+        gh_client: jefe::github::GhClient::new(),
     }));
 
     smol::block_on(async {

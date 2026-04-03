@@ -12,6 +12,7 @@ use crate::state::{AppState, PaneFocus, ScreenMode};
 use crate::theme::{ResolvedColors, ThemeColors};
 
 use super::super::components::{AgentList, KeybindBar, Preview, Sidebar, StatusBar, TerminalView};
+use super::issues::IssuesScreen;
 
 /// Props for the dashboard screen.
 #[derive(Default, Props)]
@@ -44,6 +45,18 @@ pub struct DashboardProps {
 #[component]
 pub fn Dashboard(props: &DashboardProps) -> impl Into<AnyElement<'static>> {
     let state = props.state.as_ref();
+
+    // Delegate to issues screen when in issues mode.
+    if state.is_some_and(|s| s.screen_mode == ScreenMode::DashboardIssues) {
+        return element! {
+            IssuesScreen(
+                state: props.state.clone(),
+                colors: props.colors.clone(),
+                theme_name: props.theme_name.clone(),
+            )
+        }
+        .into_any();
+    }
 
     // Extract state values with defaults
     let repo_count = state.map_or(0, |s| s.repositories.len());
@@ -154,4 +167,5 @@ pub fn Dashboard(props: &DashboardProps) -> impl Into<AnyElement<'static>> {
             )
         }
     }
+    .into_any()
 }

@@ -222,6 +222,9 @@ pub enum ScreenMode {
     #[default]
     Dashboard,
     Split,
+    /// @plan PLAN-20260329-ISSUES-MODE.P03
+    /// @requirement REQ-ISS-001
+    DashboardIssues,
 }
 
 /// Pane focus within a view.
@@ -261,9 +264,124 @@ pub struct AppState {
     // Errors/warnings
     pub error_message: Option<String>,
     pub warning_message: Option<String>,
+
+    // Issues mode state
+    /// @plan PLAN-20260329-ISSUES-MODE.P03
+    /// @requirement REQ-ISS-001
+    pub issues_state: IssuesState,
 }
 
-/// Application events for deterministic state transitions.
+/// @plan PLAN-20260329-ISSUES-MODE.P03
+/// @requirement REQ-ISS-001
+/// @pseudocode component-001 lines 01-05
+/// Focus domain within Issues Mode — separate from PaneFocus.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum IssueFocus {
+    RepoList,
+    #[default]
+    IssueList,
+    IssueDetail,
+}
+
+/// @plan PLAN-20260329-ISSUES-MODE.P03
+/// @requirement REQ-ISS-003
+/// Subfocus within issue detail view.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DetailSubfocus {
+    #[default]
+    Body,
+    Comment(usize),
+    NewComment,
+}
+
+/// @plan PLAN-20260329-ISSUES-MODE.P03
+/// @requirement REQ-ISS-010
+/// Inline mutable control state.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum InlineState {
+    #[default]
+    None,
+    Composer {
+        target: ComposerTarget,
+        text: String,
+        cursor: usize,
+    },
+    Editor {
+        target: EditorTarget,
+        text: String,
+        cursor: usize,
+    },
+}
+
+/// @plan PLAN-20260329-ISSUES-MODE.P03
+/// @requirement REQ-ISS-010
+/// Target for inline composer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComposerTarget {
+    NewComment,
+    Reply {
+        comment_index: usize,
+        author: String,
+    },
+}
+
+/// @plan PLAN-20260329-ISSUES-MODE.P03
+/// @requirement REQ-ISS-010
+/// Target for inline editor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorTarget {
+    IssueBody,
+    Comment { comment_index: usize },
+}
+
+/// @plan PLAN-20260329-ISSUES-MODE.P03
+/// @requirement REQ-ISS-011
+/// State for send-to-agent chooser overlay.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AgentChooserState {
+    pub selected_index: usize,
+    pub agents: Vec<(crate::domain::AgentId, String)>,
+}
+
+/// @plan PLAN-20260329-ISSUES-MODE.P03
+/// @requirement REQ-ISS-005
+/// Saved agent-mode focus for restoration on exit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PriorAgentFocus {
+    pub pane_focus: PaneFocus,
+    pub selected_repository_index: Option<usize>,
+    pub selected_agent_index: Option<usize>,
+}
+
+/// @plan PLAN-20260329-ISSUES-MODE.P03
+/// @requirement REQ-ISS-001
+/// @pseudocode component-001 lines 33-40
+/// Aggregate state for Issues Mode.
+#[derive(Debug, Clone, Default)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct IssuesState {
+    pub active: bool,
+    pub issues: Vec<crate::domain::Issue>,
+    pub selected_issue_index: Option<usize>,
+    pub issue_detail: Option<crate::domain::IssueDetail>,
+    pub committed_filter: crate::domain::IssueFilter,
+    pub draft_filter: crate::domain::IssueFilter,
+    pub search_query: String,
+    pub list_loading: bool,
+    pub detail_loading: bool,
+    pub comments_loading: bool,
+    pub list_cursor: Option<String>,
+    pub has_more_issues: bool,
+    pub error: Option<String>,
+    pub issue_focus: IssueFocus,
+    pub detail_subfocus: DetailSubfocus,
+    pub inline_state: InlineState,
+    pub agent_chooser: Option<AgentChooserState>,
+    pub filter_controls_open: bool,
+    pub search_input_focused: bool,
+    pub prior_agent_focus: Option<PriorAgentFocus>,
+    pub draft_notice: Option<String>,
+}
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     // Navigation
@@ -335,4 +453,126 @@ pub enum AppEvent {
     Quit,
     ClearError,
     ClearWarning,
+
+    // Issues Mode events
+    // @plan PLAN-20260329-ISSUES-MODE.P03
+    // @requirement REQ-ISS-001
+    EnterIssuesMode,
+    ExitIssuesMode,
+    RefocusIssueList,
+
+    // Issues Navigation
+    IssuesNavigateUp,
+    IssuesNavigateDown,
+    IssuesNavigatePageUp,
+    IssuesNavigatePageDown,
+    IssuesNavigateHome,
+    IssuesNavigateEnd,
+    IssuesEnter,
+    IssuesCycleFocus,
+    IssuesCycleFocusReverse,
+    IssuesScrollDetailUp,
+    IssuesScrollDetailDown,
+    IssueDetailSubfocusNext,
+    IssueDetailSubfocusPrev,
+
+    // Issue Data Loading
+    IssueListLoaded {
+        scope_repo_id: RepositoryId,
+        issues: Vec<crate::domain::Issue>,
+        cursor: Option<String>,
+        has_more: bool,
+    },
+    IssueListLoadFailed {
+        scope_repo_id: RepositoryId,
+        error: String,
+    },
+    IssueListPageLoaded {
+        scope_repo_id: RepositoryId,
+        issues: Vec<crate::domain::Issue>,
+        cursor: Option<String>,
+        has_more: bool,
+    },
+    IssueDetailLoaded {
+        scope_repo_id: RepositoryId,
+        issue_number: u64,
+        detail: Box<crate::domain::IssueDetail>,
+    },
+    IssueDetailLoadFailed {
+        scope_repo_id: RepositoryId,
+        issue_number: u64,
+        error: String,
+    },
+    IssueCommentsPageLoaded {
+        scope_repo_id: RepositoryId,
+        issue_number: u64,
+        comments: Vec<crate::domain::IssueComment>,
+        cursor: Option<String>,
+        has_more: bool,
+    },
+    IssueCommentsPageFailed {
+        scope_repo_id: RepositoryId,
+        issue_number: u64,
+        error: String,
+    },
+
+    // Filter/Search
+    OpenFilterControls,
+    CloseFilterControls,
+    ApplyFilter,
+    ClearFilter,
+    FocusSearchInput,
+    BlurSearchInput,
+    SetSearchQuery {
+        query: String,
+    },
+    ApplySearch,
+    ClearSearch,
+    UpdateDraftFilter {
+        field: String,
+        value: String,
+    },
+
+    // Inline Mutation
+    OpenNewCommentComposer,
+    OpenReplyComposer {
+        comment_index: usize,
+    },
+    OpenInlineEditor {
+        target: EditorTarget,
+    },
+    InlineChar(char),
+    InlineNewline,
+    InlineBackspace,
+    InlineCursorLeft,
+    InlineCursorRight,
+    InlineSubmit,
+    InlineCancelOrEsc,
+    CommentCreated {
+        comment: crate::domain::IssueComment,
+    },
+    CommentCreateFailed {
+        error: String,
+    },
+    IssueBodyUpdated {
+        body: String,
+    },
+    CommentUpdated {
+        comment_index: usize,
+        body: String,
+    },
+    MutationFailed {
+        error: String,
+    },
+
+    // Send-to-Agent
+    OpenAgentChooser,
+    AgentChooserNavigateUp,
+    AgentChooserNavigateDown,
+    AgentChooserConfirm,
+    AgentChooserCancel,
+    SendToAgentCompleted,
+    SendToAgentFailed {
+        error: String,
+    },
 }

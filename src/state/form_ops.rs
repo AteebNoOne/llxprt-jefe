@@ -740,14 +740,14 @@ impl AppState {
             expand_tilde(trimmed_base_dir)
         };
 
-        if !fields.remote_enabled {
-            if let Err(e) = std::fs::create_dir_all(&base_dir) {
-                warn!(
-                    base_dir = %base_dir,
-                    error = %e,
-                    "could not create local repository base directory"
-                );
-            }
+        if !fields.remote_enabled
+            && let Err(e) = std::fs::create_dir_all(&base_dir)
+        {
+            warn!(
+                base_dir = %base_dir,
+                error = %e,
+                "could not create local repository base directory"
+            );
         }
 
         Some(Repository {
@@ -757,6 +757,7 @@ impl AppState {
             base_dir: std::path::PathBuf::from(&base_dir),
             default_profile: normalize_profile(&fields.default_profile),
             remote: Self::remote_settings_from_fields(fields),
+            issue_base_prompt: String::new(),
             agent_ids: Vec::new(),
         })
     }
@@ -798,14 +799,14 @@ impl AppState {
         }
 
         let work_dir = Self::validated_agent_work_dir(repository, &fields.work_dir)?;
-        if !repository.remote.enabled {
-            if let Err(e) = std::fs::create_dir_all(&work_dir) {
-                warn!(
-                    work_dir = %work_dir,
-                    error = %e,
-                    "could not create local agent work directory"
-                );
-            }
+        if !repository.remote.enabled
+            && let Err(e) = std::fs::create_dir_all(&work_dir)
+        {
+            warn!(
+                work_dir = %work_dir,
+                error = %e,
+                "could not create local agent work directory"
+            );
         }
 
         let mode_flags: Vec<String> = if fields.mode.trim().is_empty() {
@@ -854,14 +855,15 @@ impl AppState {
         agent.description.clone_from(&fields.description);
 
         if let Some(new_dir) = Self::validated_agent_work_dir(repository, &fields.work_dir) {
-            if !repository.remote.enabled && new_dir != agent.work_dir.to_string_lossy() {
-                if let Err(e) = std::fs::create_dir_all(&new_dir) {
-                    warn!(
-                        work_dir = %new_dir,
-                        error = %e,
-                        "could not create updated local agent work directory"
-                    );
-                }
+            if !repository.remote.enabled
+                && new_dir != agent.work_dir.to_string_lossy()
+                && let Err(e) = std::fs::create_dir_all(&new_dir)
+            {
+                warn!(
+                    work_dir = %new_dir,
+                    error = %e,
+                    "could not create updated local agent work directory"
+                );
             }
             agent.work_dir = std::path::PathBuf::from(&new_dir);
         }

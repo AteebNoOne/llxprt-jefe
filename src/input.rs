@@ -2,7 +2,7 @@
 
 use iocraft::prelude::{KeyCode, KeyEvent};
 
-use crate::state::{AppState, ModalState, PaneFocus};
+use crate::state::{AppState, InlineState, ModalState, PaneFocus, ScreenMode};
 
 /// High-level mode used to route keyboard events.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,6 +13,21 @@ pub enum InputMode {
     Search,
     Form,
     Confirm,
+    /// @plan PLAN-20260329-ISSUES-MODE.P03
+    /// @requirement REQ-ISS-002
+    IssuesNormal,
+    /// @plan PLAN-20260329-ISSUES-MODE.P03
+    /// @requirement REQ-ISS-002
+    IssuesInline,
+    /// @plan PLAN-20260329-ISSUES-MODE.P03
+    /// @requirement REQ-ISS-002
+    IssuesSearch,
+    /// @plan PLAN-20260329-ISSUES-MODE.P03
+    /// @requirement REQ-ISS-002
+    IssuesFilter,
+    /// @plan PLAN-20260329-ISSUES-MODE.P03
+    /// @requirement REQ-ISS-002
+    IssuesChooser,
 }
 
 /// Search-mode key routing result.
@@ -40,6 +55,26 @@ pub fn input_mode_for_state(state: &AppState) -> InputMode {
         | ModalState::ConfirmKillAgent { .. }
         | ModalState::PreflightPrompt { .. } => return InputMode::Confirm,
         ModalState::None => {}
+    }
+
+    // Issues mode detection — must be before Normal fallback
+    // @plan PLAN-20260329-ISSUES-MODE.P03
+    // @requirement REQ-ISS-002
+    // @pseudocode component-003 lines 01-02
+    if state.screen_mode == ScreenMode::DashboardIssues {
+        if state.issues_state.inline_state != InlineState::None {
+            return InputMode::IssuesInline;
+        }
+        if state.issues_state.agent_chooser.is_some() {
+            return InputMode::IssuesChooser;
+        }
+        if state.issues_state.search_input_focused {
+            return InputMode::IssuesSearch;
+        }
+        if state.issues_state.filter_controls_open {
+            return InputMode::IssuesFilter;
+        }
+        return InputMode::IssuesNormal;
     }
 
     if state.terminal_focused && state.pane_focus == PaneFocus::Terminal {

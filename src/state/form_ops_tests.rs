@@ -10,6 +10,7 @@ fn seed_repository() -> Repository {
         base_dir: std::path::PathBuf::from("/tmp/repo-1"),
         default_profile: String::new(),
         remote: RemoteRepositorySettings::default(),
+        issue_base_prompt: String::new(),
         agent_ids: Vec::new(),
     }
 }

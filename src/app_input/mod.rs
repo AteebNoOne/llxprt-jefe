@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+mod issues;
 mod normal;
 mod preflight;
 
@@ -486,10 +487,482 @@ pub fn dispatch_app_event(app_state: &mut AppStateHandle, ctx: &SharedContext, e
             persist_state_snapshot(ctx, &state);
         }
 
+        // ── Issue list / repo list navigation with auto-load ─────────────
+        // @plan PLAN-20260329-ISSUES-MODE.P15
+        // @requirement REQ-ISS-001, REQ-ISS-006, REQ-ISS-009
+        AppEvent::IssuesNavigateUp | AppEvent::IssuesNavigateDown => {
+            let (focus, prev_repo_idx, prev_issue_idx) = {
+                let state = app_state.read();
+                (
+                    state.issues_state.issue_focus,
+                    state.selected_repository_index,
+                    state.issues_state.selected_issue_index,
+                )
+            };
+
+            apply_and_persist(app_state, ctx, evt);
+
+            match focus {
+                jefe::state::IssueFocus::RepoList => {
+                    let new_repo_idx = app_state.read().selected_repository_index;
+                    if new_repo_idx != prev_repo_idx {
+                        {
+                            let mut state = app_state.write();
+                            state.issues_state.issues.clear();
+                            state.issues_state.selected_issue_index = None;
+                            state.issues_state.issue_detail = None;
+                            state.issues_state.list_cursor = None;
+                            state.issues_state.has_more_issues = false;
+                            state.issues_state.error = None;
+                            state.issues_state.inline_state = jefe::state::InlineState::None;
+                            state.issues_state.agent_chooser = None;
+                            state.issues_state.list_loading = true;
+                            state.issues_state.issue_focus = jefe::state::IssueFocus::IssueList;
+                        }
+                        dispatch_app_event(app_state, ctx, AppEvent::RefocusIssueList);
+                    }
+                }
+                jefe::state::IssueFocus::IssueList => {
+                    let new_issue_idx = app_state.read().issues_state.selected_issue_index;
+                    if new_issue_idx != prev_issue_idx {
+                        // Build a lightweight preview from list data (no I/O)
+                        preview_issue_from_list(app_state);
+                    }
+                }
+                jefe::state::IssueFocus::IssueDetail => {}
+            }
+        }
+
+        // ── Issues-mode events that require I/O ────────────────────────────
+        // @plan PLAN-20260329-ISSUES-MODE.P15
+        // @requirement REQ-ISS-006, REQ-ISS-013
+        AppEvent::EnterIssuesMode | AppEvent::RefocusIssueList => {
+            // Apply state transition first (sets list_loading = true, etc.)
+            apply_and_persist(app_state, ctx, evt);
+
+            // Now perform the actual issue list fetch
+            let (scope_repo_id, owner, repo, filter, cursor, page_size) = {
+                let state = app_state.read();
+                let gh_repo = resolve_gh_repo(&state);
+                let filter = state.issues_state.committed_filter.clone();
+                let cursor = state.issues_state.list_cursor.clone();
+                let scope_repo_id = current_scope_repo_id(&state);
+                (scope_repo_id, gh_repo.0, gh_repo.1, filter, cursor, 30u32)
+            };
+
+            if owner.is_empty() || repo.is_empty() {
+                let mut state = app_state.write();
+                *state = std::mem::take(&mut *state).apply(AppEvent::IssueListLoadFailed {
+                    scope_repo_id,
+                    error: "No GitHub repository detected. Ensure the repository has a git remote pointing to GitHub.".to_string(),
+                });
+                return;
+            }
+
+            let result = if let Some(ctx_arc) = &ctx
+                && let Ok(ctx_guard) = ctx_arc.lock()
+            {
+                Some(ctx_guard.gh_client.list_issues(
+                    &owner,
+                    &repo,
+                    &filter,
+                    cursor.as_deref(),
+                    page_size,
+                ))
+            } else {
+                None
+            };
+
+            match result {
+                Some(Ok(response)) => {
+                    let has_issues = !response.issues.is_empty();
+                    let mut state = app_state.write();
+                    *state = std::mem::take(&mut *state).apply(AppEvent::IssueListLoaded {
+                        scope_repo_id: scope_repo_id.clone(),
+                        issues: response.issues,
+                        cursor: response.cursor,
+                        has_more: response.has_more,
+                    });
+                    drop(state);
+                    // Show preview for the first issue (no I/O)
+                    if has_issues {
+                        preview_issue_from_list(app_state);
+                    }
+                }
+                Some(Err(e)) => {
+                    let mut state = app_state.write();
+                    *state = std::mem::take(&mut *state).apply(AppEvent::IssueListLoadFailed {
+                        scope_repo_id: scope_repo_id.clone(),
+                        error: e.to_string(),
+                    });
+                }
+                None => {
+                    let mut state = app_state.write();
+                    *state = std::mem::take(&mut *state).apply(AppEvent::IssueListLoadFailed {
+                        scope_repo_id,
+                        error: "Application context unavailable".to_string(),
+                    });
+                }
+            }
+        }
+
+        // @plan PLAN-20260329-ISSUES-MODE.P15
+        // @requirement REQ-ISS-009
+        AppEvent::IssuesEnter => {
+            apply_and_persist(app_state, ctx, AppEvent::IssuesEnter);
+            load_issue_detail_for_selection(app_state, ctx);
+        }
+
+        // @plan PLAN-20260329-ISSUES-MODE.P15
+        // @requirement REQ-ISS-010
+        AppEvent::InlineSubmit => {
+            let submit_action = {
+                let state = app_state.read();
+                match &state.issues_state.inline_state {
+                    jefe::state::InlineState::Composer { target, text, .. } => {
+                        Some(InlineSubmitAction::Create {
+                            target: target.clone(),
+                            text: text.clone(),
+                        })
+                    }
+                    jefe::state::InlineState::Editor { target, text, .. } => {
+                        Some(InlineSubmitAction::Edit {
+                            target: target.clone(),
+                            text: text.clone(),
+                        })
+                    }
+                    jefe::state::InlineState::None => None,
+                }
+            };
+
+            let Some(action) = submit_action else {
+                return;
+            };
+
+            let (owner, repo) = {
+                let state = app_state.read();
+                resolve_gh_repo(&state)
+            };
+
+            if owner.is_empty() || repo.is_empty() {
+                let mut state = app_state.write();
+                *state = std::mem::take(&mut *state).apply(AppEvent::MutationFailed {
+                    error: "No GitHub repository detected".to_string(),
+                });
+                return;
+            }
+
+            match action {
+                InlineSubmitAction::Create { target, text } => {
+                    let issue_number = {
+                        let state = app_state.read();
+                        state.issues_state.issue_detail.as_ref().map(|d| d.number)
+                    };
+                    let Some(number) = issue_number else { return };
+
+                    let result = if let Some(ctx_arc) = &ctx
+                        && let Ok(ctx_guard) = ctx_arc.lock()
+                    {
+                        Some(
+                            ctx_guard
+                                .gh_client
+                                .create_comment(&owner, &repo, number, &text),
+                        )
+                    } else {
+                        None
+                    };
+
+                    match result {
+                        Some(Ok(comment)) => {
+                            let mut state = app_state.write();
+                            *state = std::mem::take(&mut *state)
+                                .apply(AppEvent::CommentCreated { comment });
+                        }
+                        Some(Err(e)) => {
+                            let mut state = app_state.write();
+                            *state =
+                                std::mem::take(&mut *state).apply(AppEvent::CommentCreateFailed {
+                                    error: e.to_string(),
+                                });
+                        }
+                        None => {}
+                    }
+                    let _ = target; // used for routing, not needed further
+                }
+                InlineSubmitAction::Edit { target, text } => match target {
+                    jefe::state::EditorTarget::IssueBody => {
+                        let issue_number = {
+                            let state = app_state.read();
+                            state.issues_state.issue_detail.as_ref().map(|d| d.number)
+                        };
+                        let Some(number) = issue_number else { return };
+
+                        let result = if let Some(ctx_arc) = &ctx
+                            && let Ok(ctx_guard) = ctx_arc.lock()
+                        {
+                            Some(
+                                ctx_guard
+                                    .gh_client
+                                    .update_issue_body(&owner, &repo, number, &text),
+                            )
+                        } else {
+                            None
+                        };
+
+                        match result {
+                            Some(Ok(())) => {
+                                let mut state = app_state.write();
+                                *state = std::mem::take(&mut *state)
+                                    .apply(AppEvent::IssueBodyUpdated { body: text });
+                            }
+                            Some(Err(e)) => {
+                                let mut state = app_state.write();
+                                *state =
+                                    std::mem::take(&mut *state).apply(AppEvent::MutationFailed {
+                                        error: e.to_string(),
+                                    });
+                            }
+                            None => {}
+                        }
+                    }
+                    jefe::state::EditorTarget::Comment { comment_index } => {
+                        let comment_id = {
+                            let state = app_state.read();
+                            state
+                                .issues_state
+                                .issue_detail
+                                .as_ref()
+                                .and_then(|d| d.comments.get(comment_index))
+                                .map(|c| c.comment_id)
+                        };
+                        let Some(cid) = comment_id else { return };
+
+                        let result = if let Some(ctx_arc) = &ctx
+                            && let Ok(ctx_guard) = ctx_arc.lock()
+                        {
+                            Some(
+                                ctx_guard
+                                    .gh_client
+                                    .update_comment(&owner, &repo, cid, &text),
+                            )
+                        } else {
+                            None
+                        };
+
+                        match result {
+                            Some(Ok(())) => {
+                                let mut state = app_state.write();
+                                *state =
+                                    std::mem::take(&mut *state).apply(AppEvent::CommentUpdated {
+                                        comment_index,
+                                        body: text,
+                                    });
+                            }
+                            Some(Err(e)) => {
+                                let mut state = app_state.write();
+                                *state =
+                                    std::mem::take(&mut *state).apply(AppEvent::MutationFailed {
+                                        error: e.to_string(),
+                                    });
+                            }
+                            None => {}
+                        }
+                    }
+                },
+            }
+        }
+
         _ => {
             apply_and_persist(app_state, ctx, evt);
         }
     }
+}
+
+/// Helper enum for classifying inline submit actions.
+enum InlineSubmitAction {
+    Create {
+        target: jefe::state::ComposerTarget,
+        text: String,
+    },
+    Edit {
+        target: jefe::state::EditorTarget,
+        text: String,
+    },
+}
+
+/// Get the RepositoryId of the currently selected repository (for scope tracking).
+fn current_scope_repo_id(state: &jefe::state::AppState) -> jefe::domain::RepositoryId {
+    state
+        .selected_repository_index
+        .and_then(|idx| state.repositories.get(idx))
+        .map_or_else(
+            || jefe::domain::RepositoryId(String::new()),
+            |r| r.id.clone(),
+        )
+}
+
+/// Resolve the GitHub owner/repo for the currently selected repository.
+///
+/// Attempts to extract from the repo's `base_dir` by running `git remote get-url origin`
+/// and parsing the GitHub owner/repo from the URL.
+///
+/// @plan PLAN-20260329-ISSUES-MODE.P15
+/// @requirement REQ-ISS-013
+fn resolve_gh_repo(state: &jefe::state::AppState) -> (String, String) {
+    let repo = state
+        .selected_repository_index
+        .and_then(|idx| state.repositories.get(idx));
+
+    let Some(repo) = repo else {
+        return (String::new(), String::new());
+    };
+
+    // Try to get owner/repo from git remote URL
+    let base_dir = &repo.base_dir;
+    let output = std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(base_dir)
+        .output();
+
+    let Ok(output) = output else {
+        return (String::new(), String::new());
+    };
+
+    if !output.status.success() {
+        return (String::new(), String::new());
+    }
+
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    parse_github_owner_repo(&url)
+}
+
+/// Build a lightweight issue detail preview from list data (no I/O).
+/// Used for instant preview while arrowing through the issue list.
+fn preview_issue_from_list(app_state: &mut AppStateHandle) {
+    let preview = {
+        let state = app_state.read();
+        state
+            .issues_state
+            .selected_issue_index
+            .and_then(|idx| state.issues_state.issues.get(idx))
+            .map(|issue| {
+                let gh_repo = resolve_gh_repo(&state);
+                jefe::domain::IssueDetail {
+                    repo_owner_name: format!("{}/{}", gh_repo.0, gh_repo.1),
+                    number: issue.number,
+                    title: issue.title.clone(),
+                    state: issue.state.clone(),
+                    author_login: issue.author_login.clone(),
+                    created_at: String::new(),
+                    updated_at: issue.updated_at.clone(),
+                    labels: issue
+                        .labels_summary
+                        .split(", ")
+                        .filter(|s| !s.is_empty())
+                        .map(String::from)
+                        .collect(),
+                    assignees: issue
+                        .assignee_summary
+                        .split(", ")
+                        .filter(|s| !s.is_empty())
+                        .map(String::from)
+                        .collect(),
+                    milestone: None,
+                    body: issue.body.clone(),
+                    external_url: String::new(),
+                    comments: Vec::new(),
+                    has_more_comments: false,
+                    comments_cursor: None,
+                }
+            })
+    };
+
+    if let Some(detail) = preview {
+        let mut state = app_state.write();
+        state.issues_state.issue_detail = Some(detail);
+        state.issues_state.detail_loading = false;
+    }
+}
+
+/// Load issue detail for the currently selected issue in the list.
+/// Used by IssuesEnter to get the full detail with comments.
+fn load_issue_detail_for_selection(app_state: &mut AppStateHandle, ctx: &SharedContext) {
+    let (issue_number, scope_repo_id, owner, repo) = {
+        let state = app_state.read();
+        let num = state
+            .issues_state
+            .selected_issue_index
+            .and_then(|idx| state.issues_state.issues.get(idx))
+            .map(|issue| issue.number);
+        let gh_repo = resolve_gh_repo(&state);
+        (num, current_scope_repo_id(&state), gh_repo.0, gh_repo.1)
+    };
+
+    let Some(number) = issue_number else { return };
+    if owner.is_empty() || repo.is_empty() {
+        return;
+    }
+
+    // Mark detail as loading
+    {
+        let mut state = app_state.write();
+        state.issues_state.detail_loading = true;
+    }
+
+    let result = if let Some(ctx_arc) = &ctx
+        && let Ok(ctx_guard) = ctx_arc.lock()
+    {
+        Some(ctx_guard.gh_client.get_issue_detail(&owner, &repo, number))
+    } else {
+        None
+    };
+
+    match result {
+        Some(Ok(detail)) => {
+            let mut state = app_state.write();
+            *state = std::mem::take(&mut *state).apply(AppEvent::IssueDetailLoaded {
+                scope_repo_id,
+                issue_number: number,
+                detail: std::boxed::Box::new(detail),
+            });
+        }
+        Some(Err(e)) => {
+            let mut state = app_state.write();
+            *state = std::mem::take(&mut *state).apply(AppEvent::IssueDetailLoadFailed {
+                scope_repo_id,
+                issue_number: number,
+                error: e.to_string(),
+            });
+        }
+        None => {}
+    }
+}
+
+/// Parse owner/repo from a GitHub remote URL.
+///
+/// Supports:
+/// - `https://github.com/owner/repo.git`
+/// - `https://github.com/owner/repo`
+/// - `git@github.com:owner/repo.git`
+/// - `git@github.com:owner/repo`
+fn parse_github_owner_repo(url: &str) -> (String, String) {
+    // HTTPS format
+    if let Some(rest) = url.strip_prefix("https://github.com/") {
+        let rest = rest.strip_suffix(".git").unwrap_or(rest);
+        if let Some((owner, repo)) = rest.split_once('/') {
+            return (owner.to_string(), repo.to_string());
+        }
+    }
+
+    // SSH format
+    if let Some(rest) = url.strip_prefix("git@github.com:") {
+        let rest = rest.strip_suffix(".git").unwrap_or(rest);
+        if let Some((owner, repo)) = rest.split_once('/') {
+            return (owner.to_string(), repo.to_string());
+        }
+    }
+
+    (String::new(), String::new())
 }
 
 pub fn handle_f12_toggle(app_state: &mut AppStateHandle, ctx: &SharedContext) {

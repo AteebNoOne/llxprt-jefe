@@ -13,5 +13,8 @@ pub mod state;
 pub mod theme;
 pub mod ui;
 
+/// @plan PLAN-20260329-ISSUES-MODE.P03
+pub mod github;
+
 /// Current application version.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -201,7 +201,93 @@ pub struct Repository {
     pub default_profile: String,
     #[serde(default)]
     pub remote: RemoteRepositorySettings,
+    #[serde(default)]
+    pub issue_base_prompt: String,
     pub agent_ids: Vec<AgentId>,
+}
+/// @requirement REQ-ISS-006
+/// @pseudocode component-001 lines 83-96
+/// Issue state for list display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IssueState {
+    Open,
+    Closed,
+}
+
+/// @plan PLAN-20260329-ISSUES-MODE.P03
+/// @requirement REQ-ISS-006
+/// Issue list representation.
+#[derive(Debug, Clone)]
+pub struct Issue {
+    pub number: u64,
+    pub title: String,
+    pub state: IssueState,
+    pub author_login: String,
+    pub updated_at: String,
+    pub assignee_summary: String,
+    pub labels_summary: String,
+    pub comment_count: u64,
+    pub body: String,
+}
+
+/// @plan PLAN-20260329-ISSUES-MODE.P03
+/// @requirement REQ-ISS-009
+/// Full issue detail with comments.
+#[derive(Debug, Clone)]
+pub struct IssueDetail {
+    pub repo_owner_name: String,
+    pub number: u64,
+    pub title: String,
+    pub state: IssueState,
+    pub author_login: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub labels: Vec<String>,
+    pub assignees: Vec<String>,
+    pub milestone: Option<String>,
+    pub body: String,
+    pub external_url: String,
+    pub comments: Vec<IssueComment>,
+    pub has_more_comments: bool,
+    pub comments_cursor: Option<String>,
+}
+
+/// @plan PLAN-20260329-ISSUES-MODE.P03
+/// @requirement REQ-ISS-009
+/// Single issue comment.
+#[derive(Debug, Clone)]
+pub struct IssueComment {
+    pub comment_id: u64,
+    pub author_login: String,
+    pub created_at: String,
+    pub edited_at: Option<String>,
+    pub body: String,
+}
+
+/// @plan PLAN-20260329-ISSUES-MODE.P03
+/// @requirement REQ-ISS-008
+/// Filter state options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IssueFilterState {
+    #[default]
+    Open,
+    Closed,
+    All,
+}
+
+/// @plan PLAN-20260329-ISSUES-MODE.P03
+/// @requirement REQ-ISS-008
+/// Issue list filter criteria.
+#[derive(Debug, Clone, Default)]
+pub struct IssueFilter {
+    pub query_text: String,
+    pub state: Option<IssueFilterState>,
+    pub author: String,
+    pub assignee: String,
+    pub labels: Vec<String>,
+    pub mentioned: String,
+    pub updated_before: String,
+    pub updated_after: String,
 }
 
 /// Agent lifecycle status.
@@ -312,12 +398,14 @@ impl Repository {
             base_dir,
             default_profile: String::new(),
             remote: RemoteRepositorySettings::default(),
+            issue_base_prompt: String::new(),
             agent_ids: Vec::new(),
         }
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -527,5 +615,55 @@ mod tests {
             panic!("agent with seatbelt engine should deserialize");
         };
         assert_eq!(agent.sandbox_engine, SandboxEngine::Seatbelt);
+    }
+
+    /// Test 25: issue_base_prompt serializes and deserializes correctly.
+    /// @plan PLAN-20260329-ISSUES-MODE.P04
+    /// @requirement REQ-ISS-013
+    /// @pseudocode component-001 lines 190-195
+    #[test]
+    fn test_issue_base_prompt_serde_roundtrip() {
+        let repo = Repository {
+            id: RepositoryId("repo-1".to_string()),
+            name: "Test Repo".to_string(),
+            slug: "test-repo".to_string(),
+            base_dir: PathBuf::from("/tmp/test-repo"),
+            default_profile: String::new(),
+            remote: RemoteRepositorySettings::default(),
+            issue_base_prompt: "Prioritize diagnosis".to_string(),
+            agent_ids: vec![],
+        };
+
+        let json = serde_json::to_value(&repo).expect("should serialize");
+        let repo2: Repository = serde_json::from_value(json).expect("should deserialize");
+
+        assert_eq!(repo2.issue_base_prompt, "Prioritize diagnosis");
+    }
+
+    /// Test 26: issue_base_prompt backward compatibility with missing field.
+    /// @plan PLAN-20260329-ISSUES-MODE.P04
+    /// @requirement REQ-ISS-013
+    /// @pseudocode component-001 lines 196-200
+    #[test]
+    fn test_issue_base_prompt_backward_compat() {
+        let value = json!({
+            "id": "repo-1",
+            "name": "Test Repo",
+            "slug": "test-repo",
+            "base_dir": "/tmp/test-repo",
+            "default_profile": "",
+            "remote": {
+                "enabled": false,
+                "login_user": "",
+                "host": "",
+                "run_as_user": "",
+                "setup_env_default": false
+            },
+            "agent_ids": []
+            // Note: no issue_base_prompt field
+        });
+
+        let repo: Repository = serde_json::from_value(value).expect("should deserialize");
+        assert_eq!(repo.issue_base_prompt, "");
     }
 }
