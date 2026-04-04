@@ -153,7 +153,10 @@ pub(super) fn load_issue_detail_for_selection(app_state: &mut AppStateHandle, ct
                 },
             );
         }
-        None => {}
+        None => {
+            let mut state = app_state.write();
+            state.issues_state.detail_loading = false;
+        }
     }
 }
 

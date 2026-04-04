@@ -517,6 +517,10 @@ pub fn dispatch_app_event(app_state: &mut AppStateHandle, ctx: &SharedContext, e
                             state.issues_state.list_cursor = None;
                             state.issues_state.has_more_issues = false;
                             state.issues_state.error = None;
+                            if state.issues_state.inline_state != jefe::state::InlineState::None {
+                                state.issues_state.draft_notice =
+                                    Some("Unsent draft discarded".to_string());
+                            }
                             state.issues_state.inline_state = jefe::state::InlineState::None;
                             state.issues_state.agent_chooser = None;
                             state.issues_state.list_loading = true;
@@ -558,10 +562,11 @@ pub fn dispatch_app_event(app_state: &mut AppStateHandle, ctx: &SharedContext, e
 
             if owner.is_empty() || repo.is_empty() {
                 let mut state = app_state.write();
-                *state = std::mem::take(&mut *state).apply(AppEvent::IssueListLoadFailed {
-                    scope_repo_id,
-                    error: "No GitHub repository configured. Set the GitHub Repo field (owner/repo) in repository settings.".to_string(),
-                });
+                state.issues_state.list_loading = false;
+                state.issues_state.error = Some(
+                    "No GitHub repository configured. Set the GitHub Repo field (owner/repo) in repository settings.".to_string(),
+                );
+                persist_state_snapshot(ctx, &state);
                 return;
             }
 
