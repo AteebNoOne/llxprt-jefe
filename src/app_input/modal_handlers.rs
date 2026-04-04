@@ -127,19 +127,20 @@ pub fn handle_mode_confirm_key(
                     persist_state_snapshot(ctx, &state);
                 }
                 ModalState::ConfirmDeleteRepository { id } => {
+                    // Read app_state first, then lock context (consistent ordering)
+                    let agent_ids: Vec<AgentId> = {
+                        let state = app_state.read();
+                        state
+                            .agents
+                            .iter()
+                            .filter(|agent| agent.repository_id == id)
+                            .map(|agent| agent.id.clone())
+                            .collect()
+                    };
+
                     if let Some(ctx_arc) = &ctx
                         && let Ok(mut ctx_guard) = ctx_arc.lock()
                     {
-                        let agent_ids: Vec<AgentId> = {
-                            let state = app_state.read();
-                            state
-                                .agents
-                                .iter()
-                                .filter(|agent| agent.repository_id == id)
-                                .map(|agent| agent.id.clone())
-                                .collect()
-                        };
-
                         for agent_id in &agent_ids {
                             if let Err(e) = ctx_guard.runtime.kill(agent_id) {
                                 match e {

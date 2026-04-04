@@ -520,9 +520,12 @@ pub fn dispatch_app_event(app_state: &mut AppStateHandle, ctx: &SharedContext, e
                             state.issues_state.inline_state = jefe::state::InlineState::None;
                             state.issues_state.agent_chooser = None;
                             state.issues_state.list_loading = true;
-                            // Stay in RepoList focus so user can keep navigating repos
                         }
+                        // Trigger issue list load; RefocusIssueList changes
+                        // focus to IssueList, so restore RepoList focus after.
                         dispatch_app_event(app_state, ctx, AppEvent::RefocusIssueList);
+                        app_state.write().issues_state.issue_focus =
+                            jefe::state::IssueFocus::RepoList;
                     }
                 }
                 jefe::state::IssueFocus::IssueList => {
@@ -681,6 +684,10 @@ pub fn dispatch_app_event(app_state: &mut AppStateHandle, ctx: &SharedContext, e
             launch_sig.mode_flags.push(
                 "Read and work on the GitHub issue described in .jefe/issue-prompt.md".to_owned(),
             );
+
+            if !preflight_or_prompt(app_state, ctx, &agent_id, &launch_sig) {
+                return;
+            }
 
             // Launch the agent
             let mut launched = false;

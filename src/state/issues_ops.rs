@@ -331,6 +331,7 @@ impl AppState {
             } => {
                 let current_repo_id = self.selected_repository_id().cloned();
                 if current_repo_id.as_ref() == Some(&scope_repo_id) {
+                    self.issues_state.error = None;
                     self.issues_state.issues = issues;
                     self.issues_state.list_cursor = cursor;
                     self.issues_state.has_more_issues = has_more;
@@ -351,6 +352,7 @@ impl AppState {
             } => {
                 let current_repo_id = self.selected_repository_id().cloned();
                 if current_repo_id.as_ref() == Some(&scope_repo_id) {
+                    self.issues_state.error = None;
                     self.issues_state.issues.extend(issues);
                     self.issues_state.list_cursor = cursor;
                     self.issues_state.has_more_issues = has_more;
@@ -364,6 +366,7 @@ impl AppState {
             } => {
                 let current_repo_id = self.selected_repository_id().cloned();
                 if current_repo_id.as_ref() == Some(&scope_repo_id) {
+                    self.issues_state.error = None;
                     self.issues_state.issue_detail = Some(*detail);
                     self.issues_state.detail_loading = false;
                     self.issues_state.detail_subfocus = DetailSubfocus::Body;
@@ -386,6 +389,7 @@ impl AppState {
                         detail.comments_cursor = cursor;
                         detail.has_more_comments = has_more;
                     }
+                    self.issues_state.error = None;
                     self.issues_state.comments_loading = false;
                 }
             }
@@ -532,6 +536,7 @@ impl AppState {
             // @requirement REQ-ISS-008
             AppEvent::ClearFilter => {
                 self.issues_state.committed_filter = IssueFilter::default();
+                self.issues_state.draft_filter = IssueFilter::default();
             }
 
             // @requirement REQ-ISS-007
@@ -601,6 +606,7 @@ impl AppState {
                 if let Some(detail) = &mut self.issues_state.issue_detail {
                     detail.comments.push(comment);
                 }
+                self.issues_state.error = None;
                 self.issues_state.inline_state = InlineState::None;
             }
 
@@ -609,6 +615,7 @@ impl AppState {
                 if let Some(detail) = &mut self.issues_state.issue_detail {
                     detail.body = body;
                 }
+                self.issues_state.error = None;
                 self.issues_state.inline_state = InlineState::None;
             }
 
@@ -622,6 +629,7 @@ impl AppState {
                 {
                     comment.body = body;
                 }
+                self.issues_state.error = None;
                 self.issues_state.inline_state = InlineState::None;
             }
 

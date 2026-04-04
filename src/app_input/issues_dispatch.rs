@@ -91,6 +91,9 @@ pub(super) fn preview_issue_from_list(app_state: &mut AppStateHandle) {
         let mut state = app_state.write();
         state.issues_state.issue_detail = Some(detail);
         state.issues_state.detail_loading = false;
+        state.issues_state.comments_loading = false;
+        state.issues_state.detail_subfocus = jefe::state::DetailSubfocus::Body;
+        state.issues_state.detail_scroll_offset = 0;
     }
 }
 
