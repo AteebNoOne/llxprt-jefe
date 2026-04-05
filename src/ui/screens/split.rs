@@ -41,13 +41,24 @@ pub struct SplitScreenProps {
 pub fn SplitScreen(props: &SplitScreenProps) -> impl Into<AnyElement<'static>> {
     let state = props.state.as_ref();
 
-    let repo_count = state.map_or(0, |s| s.repositories.len());
+    let visible_repo_indices = state.map_or_else(Vec::new, AppState::visible_repository_indices);
+    let repo_count = visible_repo_indices.len();
     let running_count = state.map_or(0, |s| s.agents.iter().filter(|a| a.is_running()).count());
-    let agent_count = state.map_or(0, |s| s.agents.len());
-    let repositories = state.map_or_else(Vec::new, |s| {
-        s.visible_repository_indices()
+    let agent_count = state.map_or(0, AppState::visible_agent_count);
+    let repositories: Vec<_> = state.map_or_else(Vec::new, |s| {
+        visible_repo_indices
             .iter()
             .filter_map(|idx| s.repositories.get(*idx).cloned())
+            .collect()
+    });
+    let agent_counts: Vec<usize> = state.map_or_else(Vec::new, |s| {
+        visible_repo_indices
+            .iter()
+            .filter_map(|idx| {
+                s.repositories
+                    .get(*idx)
+                    .map(|repo| s.visible_agent_count_for_repository(&repo.id))
+            })
             .collect()
     });
     let selected_repo_idx = state
@@ -110,7 +121,9 @@ pub fn SplitScreen(props: &SplitScreenProps) -> impl Into<AnyElement<'static>> {
                     #(repositories.iter().enumerate().map(|(i, repo)| {
                         let selected = i == selected_repo_idx;
                         let prefix = if selected { "> " } else { "  " };
-                        let line = format!("{}{} ({} agents)", prefix, repo.name, repo.agent_ids.len());
+                        let visible_count = agent_counts.get(i).copied()
+                            .unwrap_or(repo.agent_ids.len());
+                        let line = format!("{}{} ({} agents)", prefix, repo.name, visible_count);
                         if selected {
                             element! {
                                 Box(height: 1u32, background_color: rc.sel_bg) {

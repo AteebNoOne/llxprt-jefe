@@ -245,3 +245,134 @@ fn delete_targets_correct_agent_when_idle_hidden() {
         other => panic!("expected ConfirmDeleteAgent, got {other:?}"),
     }
 }
+
+#[test]
+fn visible_agent_count_includes_all_when_filter_off() {
+    let state = AppState {
+        repositories: vec![Repository::new(
+            RepositoryId("r1".into()),
+            "R1".into(),
+            "r1".into(),
+            PathBuf::from("/r1"),
+        )],
+        agents: vec![
+            Agent::new(
+                AgentId("idle1".into()),
+                RepositoryId("r1".into()),
+                "Idle A".into(),
+                PathBuf::from("/r1/idle1"),
+            ),
+            {
+                let mut a = Agent::new(
+                    AgentId("run1".into()),
+                    RepositoryId("r1".into()),
+                    "Running B".into(),
+                    PathBuf::from("/r1/run1"),
+                );
+                a.status = AgentStatus::Running;
+                a
+            },
+        ],
+        selected_repository_index: Some(0),
+        selected_agent_index: Some(0),
+        pane_focus: PaneFocus::Agents,
+        ..AppState::default()
+    };
+
+    assert_eq!(state.visible_agent_count(), 2);
+    assert_eq!(
+        state.visible_agent_count_for_repository(&RepositoryId("r1".into())),
+        2
+    );
+}
+
+#[test]
+fn visible_agent_count_excludes_inactive_when_filter_on() {
+    let state = AppState {
+        repositories: vec![Repository::new(
+            RepositoryId("r1".into()),
+            "R1".into(),
+            "r1".into(),
+            PathBuf::from("/r1"),
+        )],
+        agents: vec![
+            Agent::new(
+                AgentId("idle1".into()),
+                RepositoryId("r1".into()),
+                "Idle A".into(),
+                PathBuf::from("/r1/idle1"),
+            ),
+            {
+                let mut a = Agent::new(
+                    AgentId("run1".into()),
+                    RepositoryId("r1".into()),
+                    "Running B".into(),
+                    PathBuf::from("/r1/run1"),
+                );
+                a.status = AgentStatus::Running;
+                a
+            },
+        ],
+        selected_repository_index: Some(0),
+        selected_agent_index: Some(1),
+        pane_focus: PaneFocus::Agents,
+        ..AppState::default()
+    };
+
+    let hidden = state.apply(AppEvent::ToggleHideIdleRepositories);
+    assert_eq!(hidden.visible_agent_count(), 1);
+    assert_eq!(
+        hidden.visible_agent_count_for_repository(&RepositoryId("r1".into())),
+        1
+    );
+}
+
+#[test]
+fn visible_repo_count_matches_visible_repository_indices() {
+    let state = AppState {
+        repositories: vec![
+            Repository::new(
+                RepositoryId("r1".into()),
+                "R1".into(),
+                "r1".into(),
+                PathBuf::from("/r1"),
+            ),
+            Repository::new(
+                RepositoryId("r2".into()),
+                "R2".into(),
+                "r2".into(),
+                PathBuf::from("/r2"),
+            ),
+        ],
+        agents: vec![
+            {
+                let mut a = Agent::new(
+                    AgentId("run1".into()),
+                    RepositoryId("r1".into()),
+                    "Running A".into(),
+                    PathBuf::from("/r1/run1"),
+                );
+                a.status = AgentStatus::Running;
+                a
+            },
+            Agent::new(
+                AgentId("idle1".into()),
+                RepositoryId("r2".into()),
+                "Idle B".into(),
+                PathBuf::from("/r2/idle1"),
+            ),
+        ],
+        selected_repository_index: Some(0),
+        selected_agent_index: Some(0),
+        pane_focus: PaneFocus::Repositories,
+        ..AppState::default()
+    };
+
+    // Filter off: both repos visible
+    assert_eq!(state.visible_repository_indices().len(), 2);
+
+    // Filter on: only r1 visible (has running agent)
+    let hidden = state.apply(AppEvent::ToggleHideIdleRepositories);
+    assert_eq!(hidden.visible_repository_indices().len(), 1);
+    assert_eq!(hidden.visible_repository_indices()[0], 0);
+}

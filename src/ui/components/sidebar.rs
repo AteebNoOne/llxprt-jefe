@@ -13,6 +13,8 @@ use crate::theme::{ResolvedColors, ThemeColors};
 pub struct SidebarProps {
     /// List of repositories.
     pub repositories: Vec<Repository>,
+    /// Visible agent counts per repository (parallel to `repositories`).
+    pub agent_counts: Vec<usize>,
     /// Currently selected repository index.
     pub selected: usize,
     /// Whether this pane is focused.
@@ -55,7 +57,8 @@ pub fn Sidebar(props: &SidebarProps) -> impl Into<AnyElement<'static>> {
                 #(props.repositories.iter().enumerate().map(|(i, repo)| {
                     let selected = i == props.selected;
                     let prefix = if selected { "> " } else { "  " };
-                    let agent_count = repo.agent_ids.len();
+                    let agent_count = props.agent_counts.get(i).copied()
+                        .unwrap_or(repo.agent_ids.len());
                     let label = format!("{}{} ({})", prefix, repo.name, agent_count);
                     if selected {
                         element! {

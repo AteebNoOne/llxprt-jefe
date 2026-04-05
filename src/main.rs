@@ -132,10 +132,9 @@ fn delete_selected_repository(state: &mut AppState, repository_id: &jefe::domain
 
         let selected_repo_id = state.repositories[next_repo_idx].id.clone();
         state.selected_agent_index = state
-            .agents
-            .iter()
-            .enumerate()
-            .find_map(|(idx, agent)| (agent.repository_id == selected_repo_id).then_some(idx));
+            .agent_indices_for_repository(&selected_repo_id)
+            .first()
+            .copied();
 
         if state.selected_agent_index.is_none() {
             state.pane_focus = PaneFocus::Repositories;
@@ -177,13 +176,9 @@ fn delete_selected_agent(
         .selected_repository_index
         .and_then(|idx| state.repositories.get(idx).map(|r| r.id.clone()));
 
-    state.selected_agent_index = selected_repo_id.as_ref().and_then(|repo_id| {
-        state
-            .agents
-            .iter()
-            .enumerate()
-            .find_map(|(idx, agent)| (&agent.repository_id == repo_id).then_some(idx))
-    });
+    state.selected_agent_index = selected_repo_id
+        .as_ref()
+        .and_then(|repo_id| state.agent_indices_for_repository(repo_id).first().copied());
 
     if state.selected_agent_index.is_none() {
         state.pane_focus = PaneFocus::Repositories;

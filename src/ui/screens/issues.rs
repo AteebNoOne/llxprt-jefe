@@ -38,18 +38,29 @@ pub fn IssuesScreen(props: &IssuesScreenProps) -> impl Into<AnyElement<'static>>
     let selected_repo_idx = state
         .and_then(AppState::selected_repository_visible_index)
         .unwrap_or(0);
-    let repositories = state.map_or_else(Vec::new, |s| {
-        s.visible_repository_indices()
+    let visible_repo_indices = state.map_or_else(Vec::new, AppState::visible_repository_indices);
+    let repositories: Vec<_> = state.map_or_else(Vec::new, |s| {
+        visible_repo_indices
             .iter()
             .filter_map(|idx| s.repositories.get(*idx).cloned())
+            .collect()
+    });
+    let agent_counts: Vec<usize> = state.map_or_else(Vec::new, |s| {
+        visible_repo_indices
+            .iter()
+            .filter_map(|idx| {
+                s.repositories
+                    .get(*idx)
+                    .map(|repo| s.visible_agent_count_for_repository(&repo.id))
+            })
             .collect()
     });
     let pane_focus = state.map_or(PaneFocus::Repositories, |s| s.pane_focus);
 
     // ── Status bar data ─────────────────────────────────────────────────────
-    let repo_count = state.map_or(0, |s| s.repositories.len());
+    let repo_count = visible_repo_indices.len();
     let running_count = state.map_or(0, |s| s.agents.iter().filter(|a| a.is_running()).count());
-    let agent_count = state.map_or(0, |s| s.agents.len());
+    let agent_count = state.map_or(0, AppState::visible_agent_count);
 
     // ── Issues state ────────────────────────────────────────────────────────
     let issue_focus = state.map_or(IssueFocus::IssueList, |s| s.issues_state.issue_focus);
@@ -119,6 +130,7 @@ pub fn IssuesScreen(props: &IssuesScreenProps) -> impl Into<AnyElement<'static>>
                 Box(width: 22u32, height: 100pct) {
                     Sidebar(
                         repositories: repositories,
+                        agent_counts: agent_counts,
                         selected: selected_repo_idx,
                         focused: sidebar_focused,
                         colors: colors.clone(),

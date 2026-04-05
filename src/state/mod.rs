@@ -222,6 +222,21 @@ impl AppState {
             .collect()
     }
 
+    /// Count of visible agents for a repository, respecting the idle filter.
+    #[must_use]
+    pub fn visible_agent_count_for_repository(&self, repository_id: &RepositoryId) -> usize {
+        self.agent_indices_for_repository(repository_id).len()
+    }
+
+    /// Total count of visible agents across all repositories.
+    #[must_use]
+    pub fn visible_agent_count(&self) -> usize {
+        self.agents
+            .iter()
+            .filter(|agent| self.is_agent_visible_with_idle_filter(agent))
+            .count()
+    }
+
     pub fn rebuild_repository_agent_ids(&mut self) {
         for repository in &mut self.repositories {
             repository.agent_ids.clear();
