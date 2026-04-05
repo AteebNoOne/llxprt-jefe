@@ -737,7 +737,7 @@ pub fn dispatch_app_event(app_state: &mut AppStateHandle, ctx: &SharedContext, e
                     agent.runtime_binding = Some(jefe::domain::RuntimeBinding {
                         session_name,
                         launch_signature: launch_sig,
-                        attached: true,
+                        attached: false,
                         last_seen: None,
                     });
                 }
