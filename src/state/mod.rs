@@ -8,9 +8,11 @@
 
 mod form_ops;
 mod issues_ops;
+pub mod state_ops;
 mod types;
 mod util;
 
+pub use state_ops::{delete_selected_agent, delete_selected_repository};
 pub use types::*;
 
 use tracing::{debug, trace};

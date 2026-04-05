@@ -122,7 +122,7 @@ pub fn handle_mode_confirm_key(
                     }
 
                     let mut state = app_state.write();
-                    let _ = super::super::delete_selected_agent(&mut state, &id, delete_work_dir);
+                    let _ = jefe::state::delete_selected_agent(&mut state, &id, delete_work_dir);
                     state.modal = ModalState::None;
                     persist_state_snapshot(ctx, &state);
                 }
@@ -158,7 +158,7 @@ pub fn handle_mode_confirm_key(
                     }
 
                     let mut state = app_state.write();
-                    super::super::delete_selected_repository(&mut state, &id);
+                    jefe::state::delete_selected_repository(&mut state, &id);
                     state.modal = ModalState::None;
                     persist_state_snapshot(ctx, &state);
                 }

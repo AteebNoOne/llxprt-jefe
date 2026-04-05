@@ -9,6 +9,7 @@
 
 pub mod components;
 pub mod modals;
+pub mod orchestration;
 pub mod screens;
 
 // Re-export commonly used types
