@@ -3,6 +3,7 @@ use std::sync::Arc;
 mod issues;
 mod issues_dispatch;
 mod issues_filter;
+mod issues_mutation;
 mod modal_handlers;
 mod normal;
 mod preflight;
@@ -31,6 +32,7 @@ const MAC_ALT_DIGIT_SHORTCUTS: &[(char, u8)] = &[
     ('ª', 9),
 ];
 use jefe::input::{SearchKeyRoute, route_search_key};
+use jefe::messages::{AppMessage, IssuesMessage, RuntimeMessage, UiNavigationMessage};
 use jefe::persistence::{PersistenceManager, State as PersistedState};
 const REMOTE_ATTACH_SETTLE_DELAY: Duration = Duration::from_millis(150);
 
@@ -360,30 +362,55 @@ pub fn handle_mode_search_key(
     }
 }
 
-#[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
 pub fn dispatch_app_event(app_state: &mut AppStateHandle, ctx: &SharedContext, evt: AppEvent) {
-    debug!(event = ?evt, "dispatching app event");
+    dispatch_app_message(app_state, ctx, evt.into());
+}
 
-    match evt {
-        AppEvent::ToggleTerminalFocus => {
+#[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+pub fn dispatch_app_message(
+    app_state: &mut AppStateHandle,
+    ctx: &SharedContext,
+    message: AppMessage,
+) {
+    let route = message.route();
+    debug!(
+        message_domain = ?route.domain,
+        message = route.name,
+        "dispatching app message"
+    );
+
+    match message {
+        AppMessage::UiNavigation(UiNavigationMessage::ToggleTerminalFocus) => {
             // Keep Enter-in-terminal-pane as a UI focus toggle only.
             // Runtime attach/detach remains bound to F12.
             apply_and_persist(app_state, ctx, AppEvent::ToggleTerminalFocus);
         }
-        AppEvent::KillAgent(ref agent_id) => {
-            if let Some(ctx_arc) = &ctx
-                && let Ok(mut ctx_guard) = ctx_arc.lock()
-                && let Err(e) = ctx_guard.runtime.kill(agent_id)
-            {
-                warn!(agent_id = %agent_id.0, error = %e, "could not kill runtime session");
+        AppMessage::Runtime(RuntimeMessage::KillAgent(agent_id)) => {
+            let kill_result = if let Some(ctx_arc) = &ctx {
+                match ctx_arc.lock() {
+                    Ok(mut ctx_guard) => {
+                        ctx_guard.runtime.kill(&agent_id).map_err(|e| e.to_string())
+                    }
+                    Err(e) => Err(format!("application context lock poisoned: {e}")),
+                }
+            } else {
+                Ok(())
+            };
+
+            if let Err(error) = kill_result {
+                warn!(agent_id = %agent_id.0, error = %error, "could not kill runtime session");
+                let mut state = app_state.write();
+                state.error_message = Some(error);
+                persist_state_snapshot(ctx, &state);
+                return;
             }
 
             let mut state = app_state.write();
-            *state = std::mem::take(&mut *state).apply(evt);
+            *state = std::mem::take(&mut *state).apply(AppEvent::KillAgent(agent_id));
             state.terminal_focused = false;
             persist_state_snapshot(ctx, &state);
         }
-        AppEvent::RelaunchAgent(agent_id) => {
+        AppMessage::Runtime(RuntimeMessage::RelaunchAgent(agent_id)) => {
             // Run preflight before attempting the relaunch.
             {
                 let state_ro = app_state.read();
@@ -491,10 +518,7 @@ pub fn dispatch_app_event(app_state: &mut AppStateHandle, ctx: &SharedContext, e
             persist_state_snapshot(ctx, &state);
         }
 
-        // ── Issue list / repo list navigation with auto-load ─────────────
-        // @plan PLAN-20260329-ISSUES-MODE.P15
-        // @requirement REQ-ISS-001, REQ-ISS-006, REQ-ISS-009
-        AppEvent::IssuesNavigateUp | AppEvent::IssuesNavigateDown => {
+        AppMessage::Issues(message @ (IssuesMessage::NavigateUp | IssuesMessage::NavigateDown)) => {
             let (focus, prev_repo_idx, prev_issue_idx) = {
                 let state = app_state.read();
                 (
@@ -504,7 +528,7 @@ pub fn dispatch_app_event(app_state: &mut AppStateHandle, ctx: &SharedContext, e
                 )
             };
 
-            apply_and_persist(app_state, ctx, evt);
+            apply_and_persist(app_state, ctx, AppEvent::from(message));
 
             match focus {
                 jefe::state::IssueFocus::RepoList => {
@@ -544,22 +568,31 @@ pub fn dispatch_app_event(app_state: &mut AppStateHandle, ctx: &SharedContext, e
             }
         }
 
-        // ── Issues-mode events that require I/O ────────────────────────────
-        // @plan PLAN-20260329-ISSUES-MODE.P15
-        // @requirement REQ-ISS-006, REQ-ISS-013
-        AppEvent::EnterIssuesMode
-        | AppEvent::RefocusIssueList
-        | AppEvent::ApplyFilter
-        | AppEvent::ClearFilter => {
+        AppMessage::Issues(
+            message @ (IssuesMessage::EnterMode
+            | IssuesMessage::RefocusList
+            | IssuesMessage::ApplyFilter
+            | IssuesMessage::ClearFilter
+            | IssuesMessage::ApplySearch),
+        ) => {
+            let fresh_reload = matches!(
+                &message,
+                IssuesMessage::RefocusList | IssuesMessage::ApplySearch
+            );
+
             // Apply state transition first (sets list_loading = true, etc.)
-            apply_and_persist(app_state, ctx, evt);
+            apply_and_persist(app_state, ctx, AppEvent::from(message));
 
             // Now perform the actual issue list fetch
             let (scope_repo_id, owner, repo, filter, cursor, page_size) = {
                 let state = app_state.read();
                 let gh_repo = issues_dispatch::resolve_gh_repo(&state);
                 let filter = state.issues_state.committed_filter.clone();
-                let cursor = state.issues_state.list_cursor.clone();
+                let cursor = if fresh_reload {
+                    None
+                } else {
+                    state.issues_state.list_cursor.clone()
+                };
                 let scope_repo_id = issues_dispatch::current_scope_repo_id(&state);
                 (scope_repo_id, gh_repo.0, gh_repo.1, filter, cursor, 30u32)
             };
@@ -621,16 +654,12 @@ pub fn dispatch_app_event(app_state: &mut AppStateHandle, ctx: &SharedContext, e
             }
         }
 
-        // @plan PLAN-20260329-ISSUES-MODE.P15
-        // @requirement REQ-ISS-009
-        AppEvent::IssuesEnter => {
+        AppMessage::Issues(IssuesMessage::Enter) => {
             apply_and_persist(app_state, ctx, AppEvent::IssuesEnter);
             issues_dispatch::load_issue_detail_for_selection(app_state, ctx);
         }
 
-        // ── Send issue to agent ──────────────────────────────────────────
-        // @requirement REQ-ISS-011
-        AppEvent::AgentChooserConfirm => {
+        AppMessage::Issues(IssuesMessage::AgentChooserConfirm) => {
             // Gather chosen agent and issue data before clearing the chooser
             let send_info = {
                 let state = app_state.read();
@@ -662,7 +691,7 @@ pub fn dispatch_app_event(app_state: &mut AppStateHandle, ctx: &SharedContext, e
             };
 
             // Clear the chooser regardless
-            apply_and_persist(app_state, ctx, evt);
+            apply_and_persist(app_state, ctx, AppEvent::AgentChooserConfirm);
 
             let Some((agent_id, work_dir, signature, payload)) = send_info else {
                 return;
@@ -754,240 +783,16 @@ pub fn dispatch_app_event(app_state: &mut AppStateHandle, ctx: &SharedContext, e
             }
             persist_state_snapshot(ctx, &state);
         }
-
-        // @plan PLAN-20260329-ISSUES-MODE.P15
-        // @requirement REQ-ISS-010
-        AppEvent::InlineSubmit => {
-            let submit_action = {
-                let state = app_state.read();
-                match &state.issues_state.inline_state {
-                    jefe::state::InlineState::Composer { target, text, .. } => {
-                        Some(InlineSubmitAction::Create {
-                            target: target.clone(),
-                            text: text.clone(),
-                        })
-                    }
-                    jefe::state::InlineState::Editor { target, text, .. } => {
-                        Some(InlineSubmitAction::Edit {
-                            target: target.clone(),
-                            text: text.clone(),
-                        })
-                    }
-                    jefe::state::InlineState::None => None,
-                }
-            };
-
-            let Some(action) = submit_action else {
-                return;
-            };
-
-            let (owner, repo) = {
-                let state = app_state.read();
-                issues_dispatch::resolve_gh_repo(&state)
-            };
-
-            if owner.is_empty() || repo.is_empty() {
-                let mut state = app_state.write();
-                *state = std::mem::take(&mut *state).apply(AppEvent::MutationFailed {
-                    error: "No GitHub repository configured. Set the GitHub Repo field (owner/repo) in repository settings.".to_string(),
-                });
-                return;
-            }
-
-            match action {
-                InlineSubmitAction::Create { target, text } => {
-                    if target == jefe::state::ComposerTarget::NewIssue {
-                        let (title, body) =
-                            if let Some((first, rest)) = text.split_once(char::from(0x0Au8)) {
-                                (first.trim().to_string(), rest.to_string())
-                            } else {
-                                (text.trim().to_string(), String::new())
-                            };
-
-                        if title.is_empty() {
-                            let mut state = app_state.write();
-                            *state = std::mem::take(&mut *state).apply(AppEvent::MutationFailed {
-                                error: "Issue title cannot be empty".to_string(),
-                            });
-                            return;
-                        }
-
-                        let result = if let Some(ctx_arc) = &ctx
-                            && let Ok(ctx_guard) = ctx_arc.lock()
-                        {
-                            Some(
-                                ctx_guard
-                                    .gh_client
-                                    .create_issue(&owner, &repo, &title, &body),
-                            )
-                        } else {
-                            None
-                        };
-
-                        match result {
-                            Some(Ok(issue)) => {
-                                {
-                                    let mut state = app_state.write();
-                                    state.issues_state.inline_state =
-                                        jefe::state::InlineState::None;
-                                    state.issues_state.error = None;
-                                    state.issues_state.draft_notice =
-                                        Some(format!("Created issue #{}", issue.number));
-                                }
-                                dispatch_app_event(app_state, ctx, AppEvent::RefocusIssueList);
-                            }
-                            Some(Err(e)) => {
-                                let mut state = app_state.write();
-                                *state =
-                                    std::mem::take(&mut *state).apply(AppEvent::MutationFailed {
-                                        error: e.to_string(),
-                                    });
-                            }
-                            None => {
-                                let mut state = app_state.write();
-                                *state =
-                                    std::mem::take(&mut *state).apply(AppEvent::MutationFailed {
-                                        error: "Application context unavailable".to_string(),
-                                    });
-                            }
-                        }
-                    } else {
-                        let issue_number = {
-                            let state = app_state.read();
-                            state.issues_state.issue_detail.as_ref().map(|d| d.number)
-                        };
-                        let Some(number) = issue_number else { return };
-
-                        let result = if let Some(ctx_arc) = &ctx
-                            && let Ok(ctx_guard) = ctx_arc.lock()
-                        {
-                            Some(
-                                ctx_guard
-                                    .gh_client
-                                    .create_comment(&owner, &repo, number, &text),
-                            )
-                        } else {
-                            None
-                        };
-
-                        match result {
-                            Some(Ok(comment)) => {
-                                let mut state = app_state.write();
-                                *state = std::mem::take(&mut *state)
-                                    .apply(AppEvent::CommentCreated { comment });
-                            }
-                            Some(Err(e)) => {
-                                let mut state = app_state.write();
-                                *state = std::mem::take(&mut *state).apply(
-                                    AppEvent::CommentCreateFailed {
-                                        error: e.to_string(),
-                                    },
-                                );
-                            }
-                            None => {}
-                        }
-                    }
-                }
-                InlineSubmitAction::Edit { target, text } => match target {
-                    jefe::state::EditorTarget::IssueBody => {
-                        let issue_number = {
-                            let state = app_state.read();
-                            state.issues_state.issue_detail.as_ref().map(|d| d.number)
-                        };
-                        let Some(number) = issue_number else { return };
-
-                        let result = if let Some(ctx_arc) = &ctx
-                            && let Ok(ctx_guard) = ctx_arc.lock()
-                        {
-                            Some(
-                                ctx_guard
-                                    .gh_client
-                                    .update_issue_body(&owner, &repo, number, &text),
-                            )
-                        } else {
-                            None
-                        };
-
-                        match result {
-                            Some(Ok(())) => {
-                                let mut state = app_state.write();
-                                *state = std::mem::take(&mut *state)
-                                    .apply(AppEvent::IssueBodyUpdated { body: text });
-                            }
-                            Some(Err(e)) => {
-                                let mut state = app_state.write();
-                                *state =
-                                    std::mem::take(&mut *state).apply(AppEvent::MutationFailed {
-                                        error: e.to_string(),
-                                    });
-                            }
-                            None => {}
-                        }
-                    }
-                    jefe::state::EditorTarget::Comment { comment_index } => {
-                        let comment_id = {
-                            let state = app_state.read();
-                            state
-                                .issues_state
-                                .issue_detail
-                                .as_ref()
-                                .and_then(|d| d.comments.get(comment_index))
-                                .map(|c| c.comment_id)
-                        };
-                        let Some(cid) = comment_id else { return };
-
-                        let result = if let Some(ctx_arc) = &ctx
-                            && let Ok(ctx_guard) = ctx_arc.lock()
-                        {
-                            Some(
-                                ctx_guard
-                                    .gh_client
-                                    .update_comment(&owner, &repo, cid, &text),
-                            )
-                        } else {
-                            None
-                        };
-
-                        match result {
-                            Some(Ok(())) => {
-                                let mut state = app_state.write();
-                                *state =
-                                    std::mem::take(&mut *state).apply(AppEvent::CommentUpdated {
-                                        comment_index,
-                                        body: text,
-                                    });
-                            }
-                            Some(Err(e)) => {
-                                let mut state = app_state.write();
-                                *state =
-                                    std::mem::take(&mut *state).apply(AppEvent::MutationFailed {
-                                        error: e.to_string(),
-                                    });
-                            }
-                            None => {}
-                        }
-                    }
-                },
-            }
+        AppMessage::Issues(IssuesMessage::InlineSubmit) => {
+            issues_mutation::handle_inline_submit(app_state, ctx);
         }
 
-        _ => {
-            apply_and_persist(app_state, ctx, evt);
+        message => {
+            apply_and_persist(app_state, ctx, AppEvent::from(message));
         }
     }
 }
 
-/// Helper enum for classifying inline submit actions.
-enum InlineSubmitAction {
-    Create {
-        target: jefe::state::ComposerTarget,
-        text: String,
-    },
-    Edit {
-        target: jefe::state::EditorTarget,
-        text: String,
-    },
-}
 #[cfg(test)]
 #[path = "app_input_tests.rs"]
 mod tests;
