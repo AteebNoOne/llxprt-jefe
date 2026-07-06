@@ -25,16 +25,14 @@ pub fn ctrl_char_to_byte(c: char) -> Option<u8> {
 }
 
 fn modifiers_to_param(modifiers: KeyModifiers) -> Option<u8> {
-    let shift = if modifiers.contains(KeyModifiers::SHIFT) { 1 } else { 0 };
-    let alt = if modifiers.contains(KeyModifiers::ALT) { 2 } else { 0 };
-    let ctrl = if modifiers.contains(KeyModifiers::CONTROL) { 4 } else { 0 };
-    let meta = if modifiers.contains(KeyModifiers::META) || modifiers.contains(KeyModifiers::SUPER) { 8 } else { 0 };
+    let shift = u8::from(modifiers.contains(KeyModifiers::SHIFT));
+    let alt = u8::from(modifiers.contains(KeyModifiers::ALT)) * 2;
+    let ctrl = u8::from(modifiers.contains(KeyModifiers::CONTROL)) * 4;
+    let meta =
+        u8::from(modifiers.contains(KeyModifiers::META) || modifiers.contains(KeyModifiers::SUPER))
+            * 8;
     let val = 1 + shift + alt + ctrl + meta;
-    if val > 1 {
-        Some(val)
-    } else {
-        None
-    }
+    if val > 1 { Some(val) } else { None }
 }
 
 fn function_key_to_bytes(n: u8, modifier: Option<u8>) -> Option<Vec<u8>> {
@@ -77,144 +75,121 @@ fn function_key_to_bytes(n: u8, modifier: Option<u8>) -> Option<Vec<u8>> {
 ///
 /// When `passthrough_enter` is true, Enter maps directly to CR regardless of
 /// modifiers, so terminal-focus mode stays close to raw passthrough.
-pub fn key_to_bytes(key: &KeyEvent, passthrough_enter: bool) -> Option<Vec<u8>> {
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    let alt = key.modifiers.contains(KeyModifiers::ALT);
-    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+fn basic_key_bytes(
+    code: KeyCode,
+    modifiers: KeyModifiers,
+    passthrough_enter: bool,
+) -> Option<(Vec<u8>, bool)> {
+    let ctrl = modifiers.contains(KeyModifiers::CONTROL);
+    let alt = modifiers.contains(KeyModifiers::ALT);
+    let shift = modifiers.contains(KeyModifiers::SHIFT);
 
-    let mut alt_encoded = false;
-
-    let mut out = match key.code {
+    match code {
         KeyCode::Char(c) if ctrl => {
             let byte = ctrl_char_to_byte(c)?;
-            vec![byte]
+            Some((vec![byte], false))
         }
         KeyCode::Char(c) => {
             let mut buf = [0u8; 4];
             let s = c.encode_utf8(&mut buf);
-            s.as_bytes().to_vec()
+            Some((s.as_bytes().to_vec(), false))
         }
         KeyCode::Enter => {
             if passthrough_enter {
-                vec![b'\r']
+                Some((vec![b'\r'], false))
             } else if shift {
-                // llxprt handles multiline Enter via Shift+Return key state and
-                // also via VSCode fallback sequence backslash+carriage-return.
-                // The fallback survives tmux attach paths more reliably.
-                alt_encoded = alt;
+                let alt_encoded = alt;
                 if alt {
-                    b"\\\x1b\r".to_vec()
+                    Some((b"\\\x1b\r".to_vec(), alt_encoded))
                 } else {
-                    b"\\\r".to_vec()
+                    Some((b"\\\r".to_vec(), alt_encoded))
                 }
             } else if ctrl {
-                // llxprt accepts Ctrl+J as newline.
-                vec![b'\n']
+                Some((vec![b'\n'], false))
             } else {
-                vec![b'\r']
+                Some((vec![b'\r'], false))
             }
         }
-        KeyCode::Backspace => vec![0x7f],
-        KeyCode::Tab => vec![b'\t'],
-        KeyCode::Esc => vec![0x1b],
-        KeyCode::Up => {
-            if let Some(param) = modifiers_to_param(key.modifiers) {
-                alt_encoded = true;
-                format!("\x1b[1;{param}A").into_bytes()
-            } else {
-                b"\x1b[A".to_vec()
-            }
-        }
-        KeyCode::Down => {
-            if let Some(param) = modifiers_to_param(key.modifiers) {
-                alt_encoded = true;
-                format!("\x1b[1;{param}B").into_bytes()
-            } else {
-                b"\x1b[B".to_vec()
-            }
-        }
-        KeyCode::Right => {
-            if let Some(param) = modifiers_to_param(key.modifiers) {
-                alt_encoded = true;
-                format!("\x1b[1;{param}C").into_bytes()
-            } else {
-                b"\x1b[C".to_vec()
-            }
-        }
-        KeyCode::Left => {
-            if let Some(param) = modifiers_to_param(key.modifiers) {
-                alt_encoded = true;
-                format!("\x1b[1;{param}D").into_bytes()
-            } else {
-                b"\x1b[D".to_vec()
-            }
-        }
-        KeyCode::Home => {
-            if let Some(param) = modifiers_to_param(key.modifiers) {
-                alt_encoded = true;
-                format!("\x1b[1;{param}H").into_bytes()
-            } else {
-                b"\x1b[H".to_vec()
-            }
-        }
-        KeyCode::End => {
-            if let Some(param) = modifiers_to_param(key.modifiers) {
-                alt_encoded = true;
-                format!("\x1b[1;{param}F").into_bytes()
-            } else {
-                b"\x1b[F".to_vec()
-            }
-        }
-        KeyCode::PageUp => {
-            if let Some(param) = modifiers_to_param(key.modifiers) {
-                alt_encoded = true;
-                format!("\x1b[5;{param}~").into_bytes()
-            } else {
-                b"\x1b[5~".to_vec()
-            }
-        }
-        KeyCode::PageDown => {
-            if let Some(param) = modifiers_to_param(key.modifiers) {
-                alt_encoded = true;
-                format!("\x1b[6;{param}~").into_bytes()
-            } else {
-                b"\x1b[6~".to_vec()
-            }
-        }
-        KeyCode::Delete => {
-            if let Some(param) = modifiers_to_param(key.modifiers) {
-                alt_encoded = true;
-                format!("\x1b[3;{param}~").into_bytes()
-            } else {
-                b"\x1b[3~".to_vec()
-            }
-        }
-        KeyCode::Insert => {
-            if let Some(param) = modifiers_to_param(key.modifiers) {
-                alt_encoded = true;
-                format!("\x1b[2;{param}~").into_bytes()
-            } else {
-                b"\x1b[2~".to_vec()
-            }
-        }
-        KeyCode::F(n) => {
-            let param = modifiers_to_param(key.modifiers);
-            if param.is_some() {
-                alt_encoded = true;
-            }
-            function_key_to_bytes(n, param)?
-        }
-        _ => return None,
-    };
+        KeyCode::Backspace => Some((vec![0x7f], false)),
+        KeyCode::Tab => Some((vec![b'\t'], false)),
+        KeyCode::Esc => Some((vec![0x1b], false)),
+        _ => None,
+    }
+}
 
-    if alt && !alt_encoded {
-        let mut prefixed = Vec::with_capacity(out.len() + 1);
-        prefixed.push(0x1b);
-        prefixed.extend_from_slice(&out);
-        out = prefixed;
+fn nav_key_bytes(code: KeyCode, modifiers: KeyModifiers) -> Option<(Vec<u8>, bool)> {
+    fn encode(
+        base: &str,
+        with_param: impl Fn(u8) -> String,
+        modifiers: KeyModifiers,
+    ) -> (Vec<u8>, bool) {
+        if let Some(param) = modifiers_to_param(modifiers) {
+            (with_param(param).into_bytes(), true)
+        } else {
+            (base.as_bytes().to_vec(), false)
+        }
     }
 
-    Some(out)
+    match code {
+        KeyCode::Up => Some(encode("\x1b[A", |p| format!("\x1b[1;{p}A"), modifiers)),
+        KeyCode::Down => Some(encode("\x1b[B", |p| format!("\x1b[1;{p}B"), modifiers)),
+        KeyCode::Right => Some(encode("\x1b[C", |p| format!("\x1b[1;{p}C"), modifiers)),
+        KeyCode::Left => Some(encode("\x1b[D", |p| format!("\x1b[1;{p}D"), modifiers)),
+        KeyCode::Home => Some(encode("\x1b[H", |p| format!("\x1b[1;{p}H"), modifiers)),
+        KeyCode::End => Some(encode("\x1b[F", |p| format!("\x1b[1;{p}F"), modifiers)),
+        KeyCode::PageUp => Some(encode("\x1b[5~", |p| format!("\x1b[5;{p}~"), modifiers)),
+        KeyCode::PageDown => Some(encode("\x1b[6~", |p| format!("\x1b[6;{p}~"), modifiers)),
+        KeyCode::Delete => Some(encode("\x1b[3~", |p| format!("\x1b[3;{p}~"), modifiers)),
+        KeyCode::Insert => Some(encode("\x1b[2~", |p| format!("\x1b[2;{p}~"), modifiers)),
+        _ => None,
+    }
+}
+
+fn fkey_bytes(n: u8, modifiers: KeyModifiers) -> Option<(Vec<u8>, bool)> {
+    let param = modifiers_to_param(modifiers);
+    if param.is_some() {
+        Some((function_key_to_bytes(n, param)?, true))
+    } else {
+        Some((function_key_to_bytes(n, param)?, false))
+    }
+}
+
+pub fn key_to_bytes(key: &KeyEvent, passthrough_enter: bool) -> Option<Vec<u8>> {
+    let modifiers = key.modifiers;
+
+    if let Some((mut out, alt_encoded)) = basic_key_bytes(key.code, modifiers, passthrough_enter) {
+        if modifiers.contains(KeyModifiers::ALT) && !alt_encoded {
+            let mut prefixed = Vec::with_capacity(out.len() + 1);
+            prefixed.push(0x1b);
+            prefixed.extend_from_slice(&out);
+            out = prefixed;
+        }
+        return Some(out);
+    }
+
+    if let Some((mut out, alt_encoded)) = nav_key_bytes(key.code, modifiers) {
+        if modifiers.contains(KeyModifiers::ALT) && !alt_encoded {
+            let mut prefixed = Vec::with_capacity(out.len() + 1);
+            prefixed.push(0x1b);
+            prefixed.extend_from_slice(&out);
+            out = prefixed;
+        }
+        return Some(out);
+    }
+
+    if let KeyCode::F(n) = key.code
+        && let Some((mut out, alt_encoded)) = fkey_bytes(n, modifiers)
+    {
+        if modifiers.contains(KeyModifiers::ALT) && !alt_encoded {
+            let mut prefixed = Vec::with_capacity(out.len() + 1);
+            prefixed.push(0x1b);
+            prefixed.extend_from_slice(&out);
+            out = prefixed;
+        }
+        return Some(out);
+    }
+
+    None
 }
 
 pub fn should_suppress_synthetic_enter(armed: bool, key_event: &KeyEvent) -> bool {
@@ -451,9 +426,15 @@ mod key_tests {
         // alt parameter = 3
         assert_eq!(key_to_bytes(&alt_down, false), Some(b"\x1b[1;3B".to_vec()));
         // shift parameter = 2
-        assert_eq!(key_to_bytes(&shift_right, false), Some(b"\x1b[1;2C".to_vec()));
+        assert_eq!(
+            key_to_bytes(&shift_right, false),
+            Some(b"\x1b[1;2C".to_vec())
+        );
         // ctrl + alt parameter = 7
-        assert_eq!(key_to_bytes(&ctrl_alt_left, false), Some(b"\x1b[1;7D".to_vec()));
+        assert_eq!(
+            key_to_bytes(&ctrl_alt_left, false),
+            Some(b"\x1b[1;7D".to_vec())
+        );
     }
 
     #[test]
@@ -465,11 +446,26 @@ mod key_tests {
         let shift_home = key_event(KeyCode::Home, KeyModifiers::SHIFT);
         let ctrl_end = key_event(KeyCode::End, KeyModifiers::CONTROL);
 
-        assert_eq!(key_to_bytes(&ctrl_pageup, false), Some(b"\x1b[5;5~".to_vec()));
-        assert_eq!(key_to_bytes(&alt_pagedown, false), Some(b"\x1b[6;3~".to_vec()));
-        assert_eq!(key_to_bytes(&shift_delete, false), Some(b"\x1b[3;2~".to_vec()));
-        assert_eq!(key_to_bytes(&ctrl_alt_insert, false), Some(b"\x1b[2;7~".to_vec()));
-        assert_eq!(key_to_bytes(&shift_home, false), Some(b"\x1b[1;2H".to_vec()));
+        assert_eq!(
+            key_to_bytes(&ctrl_pageup, false),
+            Some(b"\x1b[5;5~".to_vec())
+        );
+        assert_eq!(
+            key_to_bytes(&alt_pagedown, false),
+            Some(b"\x1b[6;3~".to_vec())
+        );
+        assert_eq!(
+            key_to_bytes(&shift_delete, false),
+            Some(b"\x1b[3;2~".to_vec())
+        );
+        assert_eq!(
+            key_to_bytes(&ctrl_alt_insert, false),
+            Some(b"\x1b[2;7~".to_vec())
+        );
+        assert_eq!(
+            key_to_bytes(&shift_home, false),
+            Some(b"\x1b[1;2H".to_vec())
+        );
         assert_eq!(key_to_bytes(&ctrl_end, false), Some(b"\x1b[1;5F".to_vec()));
     }
 
@@ -481,7 +477,10 @@ mod key_tests {
 
         assert_eq!(key_to_bytes(&ctrl_f1, false), Some(b"\x1b[1;5P".to_vec()));
         assert_eq!(key_to_bytes(&alt_f5, false), Some(b"\x1b[15;3~".to_vec()));
-        assert_eq!(key_to_bytes(&ctrl_alt_f12, false), Some(b"\x1b[24;7~".to_vec()));
+        assert_eq!(
+            key_to_bytes(&ctrl_alt_f12, false),
+            Some(b"\x1b[24;7~".to_vec())
+        );
     }
 
     #[test]
