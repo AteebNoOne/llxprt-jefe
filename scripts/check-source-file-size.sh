@@ -3,8 +3,8 @@
 #
 # Fails when a Rust source file under the scan roots exceeds the hard line
 # limit, and warns above a recommended limit. This is the local equivalent of
-# the `source_file_size` CI job (.github/workflows/ci.yml), which calls this
-# script so local checks and CI never drift.
+# the `source_file_size` CI job in .github/workflows/ci.yml; `make ci-check`
+# runs it so contributors can reproduce that gate before pushing.
 #
 # Usage:
 #   scripts/check-source-file-size.sh
@@ -15,7 +15,10 @@
 #   WARN_LIMIT  recommended limit, in lines (default: 750)
 set -euo pipefail
 
-readonly SCAN_ROOTS="${SCAN_ROOTS:-src tests}"
+# Split the override into an array so multiple roots are handled by quoting
+# rather than unquoted word-splitting (which would also risk glob expansion).
+read -r -a SCAN_ROOTS <<< "${SCAN_ROOTS:-src tests}"
+readonly SCAN_ROOTS
 readonly HARD_LIMIT="${HARD_LIMIT:-1000}"
 readonly WARN_LIMIT="${WARN_LIMIT:-750}"
 
@@ -42,10 +45,10 @@ while IFS= read -r file; do
   elif [ "$lines" -gt "$WARN_LIMIT" ]; then
     warn "$file has $lines lines (recommended max $WARN_LIMIT)"
   fi
-done < <(find $SCAN_ROOTS -type f -name '*.rs' 2>/dev/null | sort)
+done < <(find "${SCAN_ROOTS[@]}" -type f -name '*.rs' 2>/dev/null | sort)
 
 if [ "$found" -eq 0 ]; then
-  echo "No Rust source files found under: $SCAN_ROOTS"
+  echo "No Rust source files found under: ${SCAN_ROOTS[*]}"
   exit 0
 fi
 
