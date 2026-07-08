@@ -118,6 +118,15 @@ pub trait RuntimeManager: Send {
     /// Whether the attached application currently has bracketed paste enabled.
     fn bracketed_paste_active(&self) -> bool;
 
+    /// Atomically read and clear the dirty flag on the attached viewer.
+    ///
+    /// Returns `true` when new PTY data has arrived since the last call,
+    /// `false` otherwise. This enables event-driven rendering: the render loop
+    /// only triggers a re-render when the terminal content has actually changed,
+    /// avoiding wasteful ~30fps renders that block keyboard input processing.
+    #[must_use]
+    fn take_dirty(&self) -> bool;
+
     /// Get a reference to a session by agent ID.
     fn get_session(&self, agent_id: &AgentId) -> Option<&RuntimeSession>;
 
@@ -251,6 +260,10 @@ impl RuntimeManager for StubRuntimeManager {
     }
 
     fn bracketed_paste_active(&self) -> bool {
+        false
+    }
+
+    fn take_dirty(&self) -> bool {
         false
     }
 
@@ -728,6 +741,10 @@ impl RuntimeManager for TmuxRuntimeManager {
             .is_some_and(AttachedViewer::bracketed_paste_active)
     }
 
+    fn take_dirty(&self) -> bool {
+        self.viewer.as_ref().is_some_and(AttachedViewer::take_dirty)
+    }
+
     fn get_session(&self, agent_id: &AgentId) -> Option<&RuntimeSession> {
         self.sessions.get(agent_id)
     }
@@ -842,5 +859,25 @@ mod tests {
         mgr.record_clipboard_passthrough("jefe-agent-b");
         assert!(mgr.clipboard_passthrough_enforced("jefe-agent-a"));
         assert!(mgr.clipboard_passthrough_enforced("jefe-agent-b"));
+    }
+
+    #[test]
+    fn stub_take_dirty_always_returns_false() {
+        let mgr = StubRuntimeManager::default();
+        // The stub has no real PTY, so the dirty flag is always false.
+        assert!(
+            !mgr.take_dirty(),
+            "StubRuntimeManager should never be dirty"
+        );
+    }
+
+    #[test]
+    fn tmux_take_dirty_returns_false_without_viewer() {
+        let mgr = TmuxRuntimeManager::new(40, 120);
+        // No viewer attached → take_dirty must return false (not panic).
+        assert!(
+            !mgr.take_dirty(),
+            "take_dirty should return false when no viewer is attached"
+        );
     }
 }

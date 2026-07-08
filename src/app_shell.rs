@@ -68,14 +68,37 @@ pub fn App(mut hooks: Hooks, props: &AppProps) -> impl Into<AnyElement<'static>>
         crate::app_init::restore_runtime_sessions(&mut app_state, &ctx);
     }
 
-    // Poll for PTY output updates (~30fps).
+    // Event-driven render: only trigger a re-render when the PTY has new data
+    // (dirty flag) or a safety-net interval (~1s) has elapsed. This avoids
+    // wasteful ~30fps renders that block keyboard input on smol's single
+    // executor thread. PTY dirtiness is only consumed as a render trigger when
+    // the terminal pane is the active focus target — when the user is
+    // navigating agents/repos lists, the safety-net interval is sufficient.
     hooks.use_future({
+        let ctx = ctx.clone();
+        let app_state = app_state;
         let mut render_tick = render_tick;
         async move {
+            const POLL_MS: u64 = 16;
+            const SAFETY_NET_MS: u64 = 1000;
+            let mut elapsed_ms: u64 = 0;
             loop {
-                smol::Timer::after(std::time::Duration::from_millis(33)).await;
-                let tick = render_tick.get();
-                render_tick.set(tick.wrapping_add(1));
+                smol::Timer::after(std::time::Duration::from_millis(POLL_MS)).await;
+                elapsed_ms = elapsed_ms.saturating_add(POLL_MS);
+
+                let terminal_active = {
+                    let state = app_state.read();
+                    state.pane_focus == PaneFocus::Terminal
+                };
+
+                let should_render =
+                    elapsed_ms >= SAFETY_NET_MS || (terminal_active && is_pty_dirty(ctx.as_ref()));
+
+                if should_render {
+                    elapsed_ms = 0;
+                    let tick = render_tick.get();
+                    render_tick.set(tick.wrapping_add(1));
+                }
             }
         }
     });
@@ -783,6 +806,18 @@ fn clear_all_attachments(app_state: &mut HookState<AppState>) {
     }
 }
 
+/// Whether the live PTY snapshot should be skipped because the terminal pane
+/// is not the active focus target.
+///
+/// Only the live PTY snapshot for a running agent is gated — it is the
+/// expensive hot-path operation (cell-by-cell terminal grid iteration under
+/// mutex lock). Dead-agent output capture is a one-shot read and is always
+/// allowed regardless of pane focus.
+#[must_use]
+fn should_skip_live_snapshot(status: AgentStatus, pane_focus: PaneFocus) -> bool {
+    status == AgentStatus::Running && pane_focus != PaneFocus::Terminal
+}
+
 /// Capture terminal output for the currently selected agent if available.
 pub fn capture_terminal_snapshot(
     ctx: Option<&CtxArc>,
@@ -790,9 +825,17 @@ pub fn capture_terminal_snapshot(
     selected_agent_id: Option<&AgentId>,
     selected_running_agent_id: Option<&AgentId>,
 ) -> Option<TerminalSnapshot> {
+    let selected_agent = snapshot.selected_agent()?;
+
+    // Skip the expensive live PTY snapshot when the terminal pane is not the
+    // active focus target. This check runs before locking the ctx mutex so
+    // the render cycle stays cheap while the user navigates agents/repos lists.
+    if should_skip_live_snapshot(selected_agent.status, snapshot.pane_focus) {
+        return None;
+    }
+
     let ctx_arc = ctx?;
     let ctx_guard = ctx_arc.try_lock().ok()?;
-    let selected_agent = snapshot.selected_agent()?;
     match selected_agent.status {
         AgentStatus::Running => selected_running_agent_id
             .as_ref()
@@ -805,5 +848,94 @@ pub fn capture_terminal_snapshot(
                 .and_then(|_| ctx_guard.runtime.capture_session_output(agent_id))
         }),
         _ => None,
+    }
+}
+
+/// Check whether the attached PTY has new data since the last render.
+///
+/// Uses `try_lock` so the timer future never blocks on the `ctx` mutex. When
+/// the lock is contended (e.g. a background attach is running), this returns
+/// `false` — the next poll iteration will try again.
+fn is_pty_dirty(ctx: Option<&CtxArc>) -> bool {
+    let Some(ctx_arc) = ctx else {
+        return false;
+    };
+    let Ok(ctx_guard) = ctx_arc.try_lock() else {
+        return false;
+    };
+    ctx_guard.runtime.take_dirty()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jefe::domain::AgentStatus;
+    use jefe::state::PaneFocus;
+
+    // --- should_skip_live_snapshot ---
+
+    #[test]
+    fn should_skip_live_snapshot_for_running_when_pane_is_agents() {
+        assert!(
+            should_skip_live_snapshot(AgentStatus::Running, PaneFocus::Agents),
+            "running agent with Agents pane should be skipped"
+        );
+    }
+
+    #[test]
+    fn should_skip_live_snapshot_for_running_when_pane_is_repositories() {
+        assert!(
+            should_skip_live_snapshot(AgentStatus::Running, PaneFocus::Repositories),
+            "running agent with Repositories pane should be skipped"
+        );
+    }
+
+    #[test]
+    fn should_not_skip_live_snapshot_for_running_when_pane_is_terminal() {
+        assert!(
+            !should_skip_live_snapshot(AgentStatus::Running, PaneFocus::Terminal),
+            "running agent with Terminal pane should NOT be skipped"
+        );
+    }
+
+    #[test]
+    fn should_not_skip_live_snapshot_for_dead_regardless_of_pane() {
+        for focus in [
+            PaneFocus::Agents,
+            PaneFocus::Repositories,
+            PaneFocus::Terminal,
+        ] {
+            assert!(
+                !should_skip_live_snapshot(AgentStatus::Dead, focus),
+                "dead agent with {focus:?} pane should NOT be skipped"
+            );
+        }
+    }
+
+    /// The live-snapshot gate only applies to Running agents. Other statuses
+    /// (Queued, Completed, etc.) are handled by the match arms in
+    /// `capture_terminal_snapshot`, not by this gate.
+    #[test]
+    fn gate_only_affects_running_status() {
+        for focus in [PaneFocus::Agents, PaneFocus::Terminal] {
+            assert!(
+                !should_skip_live_snapshot(AgentStatus::Queued, focus),
+                "queued agent should not be skipped by live-snapshot gate"
+            );
+            assert!(
+                !should_skip_live_snapshot(AgentStatus::Completed, focus),
+                "completed agent should not be skipped by live-snapshot gate"
+            );
+        }
+    }
+
+    // --- is_pty_dirty ---
+
+    #[test]
+    fn is_pty_dirty_returns_false_without_ctx() {
+        assert!(
+            !is_pty_dirty(None),
+            "is_pty_dirty should be false with no ctx"
+        );
     }
 }

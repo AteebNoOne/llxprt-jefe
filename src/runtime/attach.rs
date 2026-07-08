@@ -131,6 +131,12 @@ pub struct AttachedViewer {
     term: Arc<Mutex<Term<RuntimeListener>>>,
     /// Liveness flag.
     alive: Arc<AtomicBool>,
+    /// Dirty flag set by the reader thread on every successful PTY read.
+    ///
+    /// The render loop polls this flag to decide whether to re-render. Using
+    /// `Relaxed` ordering is safe because the flag is only a hint — the actual
+    /// terminal state is protected by the `term` mutex.
+    dirty: Arc<AtomicBool>,
     /// Child process handle for deterministic teardown.
     child: Arc<Mutex<Box<dyn PtyChild + Send + Sync>>>,
     /// Reader thread handle.
@@ -495,12 +501,14 @@ impl AttachedViewer {
         let term = Arc::new(Mutex::new(term));
 
         let alive = Arc::new(AtomicBool::new(true));
+        let dirty = Arc::new(AtomicBool::new(false));
 
         // Spawn reader thread
         let term_clone = Arc::clone(&term);
         let alive_clone = Arc::clone(&alive);
+        let dirty_clone = Arc::clone(&dirty);
         let reader_thread = thread::spawn(move || {
-            reader_loop(reader, term_clone, alive_clone);
+            reader_loop(reader, term_clone, alive_clone, dirty_clone);
         });
 
         debug!(session_name = %session_name, "AttachedViewer::spawn ready");
@@ -509,6 +517,7 @@ impl AttachedViewer {
             writer,
             term,
             alive,
+            dirty,
             child,
             _reader_thread: reader_thread,
         })
@@ -517,6 +526,15 @@ impl AttachedViewer {
     /// Check if the viewer is still alive.
     pub fn is_alive(&self) -> bool {
         self.alive.load(Ordering::Relaxed)
+    }
+
+    /// Atomically read and clear the dirty flag.
+    ///
+    /// Returns `true` when new PTY data has arrived since the last call,
+    /// `false` otherwise. The flag is cleared regardless of the return value.
+    #[must_use]
+    pub fn take_dirty(&self) -> bool {
+        self.dirty.swap(false, Ordering::Relaxed)
     }
 
     /// Write input bytes to the PTY.
@@ -648,10 +666,14 @@ impl Drop for AttachedViewer {
 }
 
 /// Reader loop that feeds PTY output into the terminal model.
+///
+/// On every successful read, the `dirty` flag is set so the render loop knows
+/// new terminal data is available and should trigger a re-render.
 fn reader_loop(
     mut reader: Box<dyn Read + Send>,
     term: Arc<Mutex<Term<RuntimeListener>>>,
     alive: Arc<AtomicBool>,
+    dirty: Arc<AtomicBool>,
 ) {
     let mut buf = [0u8; 4096];
     let mut parser: Processor<StdSyncHandler> = Processor::new();
@@ -664,11 +686,7 @@ fn reader_loop(
                 break;
             }
             Ok(n) => {
-                if let Ok(mut term) = term.lock() {
-                    for byte in &buf[..n] {
-                        parser.advance(&mut *term, *byte);
-                    }
-                }
+                process_pty_read(&buf[..n], &mut parser, &term, &dirty);
             }
             Err(_) => {
                 // Reader error - mark viewer as dead
@@ -676,5 +694,108 @@ fn reader_loop(
                 break;
             }
         }
+    }
+}
+
+/// Process a batch of bytes from a PTY read: advance the terminal parser and
+/// mark the viewer dirty so the render loop knows new data arrived.
+///
+/// Extracted from `reader_loop` so the "data arrives → dirty is set" behavior
+/// can be unit-tested without a live PTY.
+fn process_pty_read(
+    bytes: &[u8],
+    parser: &mut Processor<StdSyncHandler>,
+    term: &Mutex<Term<RuntimeListener>>,
+    dirty: &AtomicBool,
+) {
+    if let Ok(mut term) = term.lock() {
+        for byte in bytes {
+            parser.advance(&mut *term, *byte);
+        }
+    }
+    dirty.store(true, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a minimal terminal model for testing `process_pty_read`.
+    fn test_term() -> Arc<Mutex<Term<RuntimeListener>>> {
+        let size = TermDimensions { cols: 80, rows: 24 };
+        Arc::new(Mutex::new(Term::new(
+            TermConfig::default(),
+            &size,
+            RuntimeListener,
+        )))
+    }
+
+    /// Processing a batch of PTY bytes must set the dirty flag — this is the
+    /// core wiring between the reader thread and the event-driven render loop.
+    #[test]
+    fn process_pty_read_marks_viewer_dirty() {
+        let term = test_term();
+        let dirty = Arc::new(AtomicBool::new(false));
+        let mut parser: Processor<StdSyncHandler> = Processor::new();
+
+        assert!(
+            !dirty.load(Ordering::Relaxed),
+            "dirty should be false before any data arrives"
+        );
+
+        process_pty_read(b"hello world", &mut parser, &term, &dirty);
+
+        assert!(
+            dirty.load(Ordering::Relaxed),
+            "dirty must be set after PTY data arrives"
+        );
+
+        // take_dirty() pattern: swap clears and returns the previous value.
+        assert!(
+            dirty.swap(false, Ordering::Relaxed),
+            "take_dirty must return true after data arrived"
+        );
+        assert!(
+            !dirty.load(Ordering::Relaxed),
+            "take_dirty must clear the flag"
+        );
+
+        // A second take_dirty() returns false (no new data since last clear).
+        assert!(
+            !dirty.swap(false, Ordering::Relaxed),
+            "take_dirty must return false when no new data"
+        );
+    }
+
+    /// Processing a PTY batch advances the terminal parser model (not just
+    /// the dirty flag), proving the wiring feeds real bytes into the `Term`.
+    #[test]
+    fn process_pty_read_advances_terminal_model() {
+        let term = test_term();
+        let dirty = Arc::new(AtomicBool::new(false));
+        let mut parser: Processor<StdSyncHandler> = Processor::new();
+
+        // A blank terminal has no content in the first cell.
+        {
+            let Ok(guard) = term.lock() else {
+                panic!("term lock should succeed");
+            };
+            let snapshot = snapshot_from_term(&guard);
+            assert_eq!(
+                snapshot.cells[0][0].ch, ' ',
+                "terminal should be blank before processing"
+            );
+        }
+
+        process_pty_read(b"X", &mut parser, &term, &dirty);
+
+        let Ok(guard) = term.lock() else {
+            panic!("term lock should succeed");
+        };
+        let snapshot = snapshot_from_term(&guard);
+        assert!(
+            snapshot.cells.iter().any(|row| row.iter().any(|c| c.ch == 'X')),
+            "terminal model should contain processed data after read"
+        );
     }
 }
