@@ -794,7 +794,10 @@ mod tests {
         };
         let snapshot = snapshot_from_term(&guard);
         assert!(
-            snapshot.cells.iter().any(|row| row.iter().any(|c| c.ch == 'X')),
+            snapshot
+                .cells
+                .iter()
+                .any(|row| row.iter().any(|c| c.ch == 'X')),
             "terminal model should contain processed data after read"
         );
     }
