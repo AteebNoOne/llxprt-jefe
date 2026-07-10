@@ -13,7 +13,7 @@ use crate::state::{AppState, DashboardGrabPane, PaneFocus, ScreenMode};
 use crate::theme::{ResolvedColors, ThemeColors};
 
 use super::super::components::{
-    KeybindBar, Preview, Sidebar, StatusBar, TerminalView, agent_list_props,
+    AgentListSelection, KeybindBar, Preview, Sidebar, StatusBar, TerminalView, agent_list_props,
     selectable_list_element,
 };
 
@@ -90,11 +90,35 @@ pub fn Dashboard(props: &DashboardProps) -> impl Into<AnyElement<'static>> {
             })
             .collect()
     });
-    let agents = state.map_or_else(Vec::new, |s| {
-        s.selected_repository()
-            .map_or_else(Vec::new, |repo| s.visible_agents_for_repository(&repo.id))
+    // Resolve the selected repository once — reused for agents, git info, and
+    // the preview pane (avoids redundant `selected_repository()` calls).
+    let selected_repo = state.and_then(|s| s.selected_repository());
+    let agents = selected_repo.map_or_else(Vec::new, |repo| {
+        state.map_or_else(Vec::new, |s| s.visible_agents_for_repository(&repo.id))
     });
+
+    // Resolve git display info (origin shortform + branch) for each visible
+    // agent, parallel to `agents` by index (issue #170).
+    let agent_git_infos: Vec<crate::git_info::GitRepoInfo> =
+        selected_repo.map_or_else(Vec::new, |repo| {
+            agents
+                .iter()
+                .map(|agent| {
+                    crate::git_info::GitRepoInfo::resolve(
+                        &repo.github_repo,
+                        repo.remote.enabled,
+                        &agent.work_dir,
+                    )
+                })
+                .collect()
+        });
+
     let selected_agent_data = state.and_then(|s| s.selected_agent().cloned());
+
+    // Git info for the preview pane: reuse the already-resolved entry from
+    // `agent_git_infos` when the selected agent is visible (avoids a redundant
+    // `GitRepoInfo::resolve` call on every render frame).
+    let selected_agent_git_info = agent_git_infos.get(selected_agent_idx).cloned();
 
     // Whether the selected agent is Running with a live session. Threading this
     // to TerminalView lets the empty-state copy distinguish a healthy live
@@ -163,8 +187,11 @@ pub fn Dashboard(props: &DashboardProps) -> impl Into<AnyElement<'static>> {
                     Box(height: agent_rows, width: 100pct) {
                         #(vec![selectable_list_element(agent_list_props(
                             &agents,
-                            selected_agent_idx,
-                            grabbed_agent_idx,
+                            &agent_git_infos,
+                            AgentListSelection {
+                                selected: selected_agent_idx,
+                                grabbed: grabbed_agent_idx,
+                            },
                             !terminal_focused && pane_focus == PaneFocus::Agents,
                             colors.clone(),
                             selection,
@@ -185,6 +212,7 @@ pub fn Dashboard(props: &DashboardProps) -> impl Into<AnyElement<'static>> {
                 Box(width: preview_width, height: 100pct) {
                     Preview(
                         agent: selected_agent_data,
+                        git_info: selected_agent_git_info,
                         focused: false,
                         colors: colors.clone(),
                     )
