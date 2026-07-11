@@ -38,6 +38,60 @@ fn terminal_size() -> (u16, u16) {
     crossterm::terminal::size().unwrap_or((120, 40))
 }
 
+/// Refresh the cached terminal scrollback geometry before applying a wheel-driven
+/// scroll event (issue #198).
+///
+/// Computes `terminal_viewport_rows` (from the PTY layout) and
+/// `terminal_total_lines` (retained history + live snapshot rows) from the
+/// runtime + current layout, writing them to `AppState` so the deterministic
+/// reducer's clamp bounds match the rendered content. Runs at event time (not
+/// render time) to avoid the infinite re-render loop that mutating AppState
+/// during render would cause.
+fn refresh_terminal_scroll_geometry_from_ctx(
+    ctx: Option<&CtxArc>,
+    app_state: &mut HookState<AppState>,
+) {
+    let (cols, rows) = terminal_size();
+    let pty_layout = compute_pty_layout(cols, rows);
+
+    let (history_count, live_rows) = match ctx {
+        Some(ctx_arc) => match ctx_arc.try_lock() {
+            Ok(mut guard) => {
+                let history_count = guard.runtime.capture_history().map_or(0, |v| v.len());
+                let live_rows = guard.runtime.snapshot().map_or(0, |s| s.rows);
+                (history_count, live_rows)
+            }
+            Err(_) => {
+                // Lock contention: preserve existing geometry instead of
+                // zeroing it (issue #198 review fix #5). Zeroing would clear
+                // the scroll offset and jump to follow-tail during attach.
+                return;
+            }
+        },
+        None => {
+            // No context: preserve existing geometry instead of zeroing it
+            // (fix #3). Zeroing would clear the scroll offset.
+            return;
+        }
+    };
+
+    let mut state = app_state.write();
+    let new_total = history_count + live_rows;
+    let old_total = state.terminal_total_lines;
+    let viewport_rows = usize::from(pty_layout.pty_rows);
+
+    // Reconcile the scroll offset when content grows so the viewport stays at
+    // the same absolute position (issue #198 review fix #3).
+    state.terminal_history_offset = jefe::state::scrollback_ops::reconcile_offset_for_new_content(
+        state.terminal_history_offset,
+        old_total,
+        new_total,
+        viewport_rows,
+    );
+    state.terminal_viewport_rows = viewport_rows;
+    state.terminal_total_lines = new_total;
+}
+
 /// Map a crossterm event kind to the gesture-state-machine event kind.
 fn gesture_event_kind(kind: crossterm::event::MouseEventKind) -> Option<GestureEventKind> {
     use crossterm::event::{MouseButton, MouseEventKind};
@@ -152,6 +206,24 @@ fn route_terminal_gesture(
         app_state.write().terminal_gesture_state = GestureState::default();
         return false;
     };
+
+    // Issue #198: wheel events over the focused terminal pane move the Jefe
+    // scrollback viewport BEFORE the gesture state machine or PTY forwarding.
+    // This is the crux of usable scrollback: wheel-up scrolls the Jefe
+    // viewport, not the child. Shift+wheel already bypassed above (host
+    // native scroll). Clicks/drags still flow through the gesture machine so
+    // reporting children stay interactive.
+    if !shift_held && is_wheel_event(mouse_event) && is_event_over_terminal_pane(mouse_event) {
+        // Refresh scroll geometry from runtime + layout BEFORE applying so
+        // the reducer's clamp bounds match the rendered content (mirrors the
+        // keyboard dispatch path). Runs at event time, never at render time.
+        refresh_terminal_scroll_geometry_from_ctx(ctx, app_state);
+        if let Some(scroll_evt) = wheel_to_terminal_scroll_event(mouse_event) {
+            let mut state = app_state.write();
+            *state = std::mem::take(&mut *state).apply(scroll_evt);
+        }
+        return true;
+    }
 
     let event = GestureEvent {
         kind: event_kind,
@@ -294,6 +366,48 @@ fn dispatch_detail_scroll(
             );
         }
         _ => {}
+    }
+}
+
+/// Whether the mouse event is a wheel scroll (issue #198).
+fn is_wheel_event(mouse_event: &iocraft::FullscreenMouseEvent) -> bool {
+    use crossterm::event::MouseEventKind;
+    matches!(
+        mouse_event.kind,
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+    )
+}
+
+/// Whether the mouse event coordinates land inside the terminal pane bounds
+/// (issue #198).
+fn is_event_over_terminal_pane(mouse_event: &iocraft::FullscreenMouseEvent) -> bool {
+    let (cols, rows) = terminal_size();
+    let layout = compute_pty_layout(cols, rows);
+    let row_end = layout
+        .pane_row0
+        .saturating_add(layout.pty_rows.saturating_sub(1));
+    let col_end = layout
+        .pane_col0
+        .saturating_add(layout.pty_cols.saturating_sub(1));
+
+    mouse_event.column >= layout.pane_col0
+        && mouse_event.column <= col_end
+        && mouse_event.row >= layout.pane_row0
+        && mouse_event.row <= row_end
+}
+
+/// Map a wheel event to a terminal scroll AppEvent (issue #198).
+///
+/// Returns `None` for non-wheel events.
+#[must_use]
+fn wheel_to_terminal_scroll_event(
+    mouse_event: &iocraft::FullscreenMouseEvent,
+) -> Option<jefe::state::AppEvent> {
+    use crossterm::event::MouseEventKind;
+    match mouse_event.kind {
+        MouseEventKind::ScrollUp => Some(jefe::state::AppEvent::TerminalScrollUp),
+        MouseEventKind::ScrollDown => Some(jefe::state::AppEvent::TerminalScrollDown),
+        _ => None,
     }
 }
 
@@ -460,7 +574,7 @@ fn update_app_selection(app_state: &mut HookState<AppState>, col: u16, row: u16)
 /// Finalize a TERMINAL selection and copy using the selection-bound snapshot
 /// (Finding B) with wrap-aware text extraction (Finding C+D).
 fn finalize_terminal_selection(
-    _ctx: Option<&CtxArc>,
+    ctx: Option<&CtxArc>,
     app_state: &HookState<AppState>,
     writer: ClipboardWriter,
 ) {
@@ -482,17 +596,23 @@ fn finalize_terminal_selection(
         if let Some(snap) = &snapshot {
             terminal_selection_text(snap, &selection)
         } else {
-            // No bound snapshot — fall back to generic extraction.
+            // No bound snapshot — fall back to generic extraction (issue #198:
+            // include retained history lines for the terminal pane).
             let (cols, rows) = terminal_size();
+            let history_lines = ctx
+                .and_then(|ctx_arc| ctx_arc.try_lock().ok())
+                .and_then(|mut guard| guard.runtime.capture_history())
+                .unwrap_or_default();
             let state = app_state.read();
-            let content = pane_content_lines(selection.pane(), &state, None, cols, rows);
+            let content =
+                pane_content_lines(selection.pane(), &state, None, &history_lines, cols, rows);
             drop(state);
             selection_text(&selection, &content.lines)
         }
     } else {
         let (cols, rows) = terminal_size();
         let state = app_state.read();
-        let content = pane_content_lines(selection.pane(), &state, None, cols, rows);
+        let content = pane_content_lines(selection.pane(), &state, None, &[], cols, rows);
         drop(state);
         selection_text(&selection, &content.lines)
     };
@@ -534,8 +654,24 @@ fn finalize_and_copy_selection(
                 .filter(|a| a.is_running())
                 .map(|a| &a.id),
         );
+        // Capture history lines for the selection content projection (issue #198).
+        let history_lines = ctx
+            .and_then(|ctx_arc| {
+                ctx_arc
+                    .try_lock()
+                    .ok()
+                    .and_then(|mut guard| guard.runtime.capture_history())
+            })
+            .unwrap_or_default();
         let (cols, rows) = terminal_size();
-        let content = pane_content_lines(selection.pane(), &state, snapshot.as_ref(), cols, rows);
+        let content = pane_content_lines(
+            selection.pane(),
+            &state,
+            snapshot.as_ref(),
+            &history_lines,
+            cols,
+            rows,
+        );
         drop(state);
         selection_text(&selection, &content.lines)
     };
@@ -690,6 +826,15 @@ fn scroll_offset_for_pane(state: &AppState, pane: SelectablePane) -> usize {
         SelectablePane::PrDetail => state.prs_state.detail_scroll_offset,
         SelectablePane::ActionsDetail => state.actions_state.detail_scroll_offset,
         SelectablePane::HelpModal => state.help_scroll_offset,
+        // Issue #198: terminal history offset is bottom-relative, but the
+        // selection layer expects a top-relative "lines hidden above viewport".
+        // Convert via the shared single source of truth so the selection
+        // coordinate system agrees with the viewport projection (review fix #4).
+        SelectablePane::TerminalView => jefe::state::scrollback_ops::terminal_content_start_line(
+            state.terminal_history_offset,
+            state.terminal_total_lines,
+            state.terminal_viewport_rows,
+        ),
         _ => 0,
     }
 }

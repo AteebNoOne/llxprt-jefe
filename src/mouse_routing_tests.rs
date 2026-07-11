@@ -6,9 +6,10 @@
 
 use super::{
     WheelDirection, active_overlay_for, gesture_event_kind, is_blocking_modal_open,
-    next_wheel_scroll_offset, resolve_pane,
+    is_event_over_terminal_pane, is_wheel_event, next_wheel_scroll_offset, resolve_pane,
+    wheel_to_terminal_scroll_event,
 };
-use crossterm::event::{MouseButton, MouseEventKind};
+use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
 use jefe::domain::{Agent, AgentId, AgentKind, Repository, RepositoryId};
 use jefe::runtime::{TerminalCell, TerminalCellStyle, TerminalSnapshot};
 use jefe::selection::{
@@ -525,6 +526,7 @@ fn terminal_selection_text_matches_snapshot_including_unicode() {
         SelectablePane::TerminalView,
         &state,
         Some(&snapshot),
+        &[],
         120,
         40,
     );
@@ -644,4 +646,73 @@ fn active_overlay_agent_chooser() {
     let mut state = AppState::default();
     state.issues_state.agent_chooser = Some(jefe::state::AgentChooserState::default());
     assert_eq!(active_overlay_for(&state), OverlayPane::AgentChooser);
+}
+
+// ── Issue #198: wheel→scrollback helpers ─────────────────────────────────
+
+fn fullscreen_event(kind: MouseEventKind) -> iocraft::FullscreenMouseEvent {
+    let mut event = iocraft::FullscreenMouseEvent::new(kind, 0, 0);
+    event.modifiers = KeyModifiers::NONE;
+    event
+}
+
+#[test]
+fn is_wheel_detects_scroll_up_and_down() {
+    assert!(is_wheel_event(&fullscreen_event(MouseEventKind::ScrollUp)));
+    assert!(is_wheel_event(&fullscreen_event(
+        MouseEventKind::ScrollDown
+    )));
+}
+
+#[test]
+fn is_wheel_rejects_non_scroll_events() {
+    assert!(!is_wheel_event(&fullscreen_event(MouseEventKind::Down(
+        MouseButton::Left
+    ))));
+    assert!(!is_wheel_event(&fullscreen_event(MouseEventKind::Up(
+        MouseButton::Left
+    ))));
+}
+
+#[test]
+fn wheel_to_terminal_scroll_event_maps_scroll_up() {
+    let evt = wheel_to_terminal_scroll_event(&fullscreen_event(MouseEventKind::ScrollUp));
+    assert!(
+        matches!(evt, Some(jefe::state::AppEvent::TerminalScrollUp)),
+        "ScrollUp must map to TerminalScrollUp"
+    );
+}
+
+#[test]
+fn wheel_to_terminal_scroll_event_maps_scroll_down() {
+    let evt = wheel_to_terminal_scroll_event(&fullscreen_event(MouseEventKind::ScrollDown));
+    assert!(
+        matches!(evt, Some(jefe::state::AppEvent::TerminalScrollDown)),
+        "ScrollDown must map to TerminalScrollDown"
+    );
+}
+
+#[test]
+fn wheel_to_terminal_scroll_event_returns_none_for_non_wheel() {
+    let evt =
+        wheel_to_terminal_scroll_event(&fullscreen_event(MouseEventKind::Down(MouseButton::Left)));
+    assert!(evt.is_none(), "non-wheel events must map to None");
+}
+
+#[test]
+fn is_event_over_terminal_pane_origin_is_outside() {
+    // The origin (0,0) is always outside the terminal pane: the sidebar and
+    // status bar occupy the left columns and top rows. This is a stable,
+    // terminal-size-independent property.
+    let origin = fullscreen_event_at(0, 0, MouseEventKind::ScrollUp);
+    assert!(
+        !is_event_over_terminal_pane(&origin),
+        "(0,0) must be outside the terminal pane (sidebar/status bar region)"
+    );
+}
+
+fn fullscreen_event_at(col: u16, row: u16, kind: MouseEventKind) -> iocraft::FullscreenMouseEvent {
+    let mut event = iocraft::FullscreenMouseEvent::new(kind, col, row);
+    event.modifiers = KeyModifiers::NONE;
+    event
 }
