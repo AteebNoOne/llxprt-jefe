@@ -169,3 +169,49 @@ impl RepositoryFormFocus {
         }
     }
 }
+
+/// Form fields for dispatching a GitHub Actions workflow manually.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkflowDispatchFormFields {
+    pub ref_name: String,
+    pub inputs: String,
+}
+
+/// Cursor positions for workflow dispatch form text fields.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkflowDispatchFormCursor {
+    pub ref_name: usize,
+    pub inputs: usize,
+}
+
+/// Focus states for workflow dispatch form fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WorkflowDispatchFormFocus {
+    #[default]
+    RefName,
+    Inputs,
+    Submit,
+    Cancel,
+}
+
+impl WorkflowDispatchFormFocus {
+    #[must_use]
+    pub fn next(self) -> Self {
+        match self {
+            Self::RefName => Self::Inputs,
+            Self::Inputs => Self::Submit,
+            Self::Submit => Self::Cancel,
+            Self::Cancel => Self::RefName,
+        }
+    }
+
+    #[must_use]
+    pub fn prev(self) -> Self {
+        match self {
+            Self::RefName => Self::Cancel,
+            Self::Cancel => Self::Submit,
+            Self::Submit => Self::Inputs,
+            Self::Inputs => Self::RefName,
+        }
+    }
+}

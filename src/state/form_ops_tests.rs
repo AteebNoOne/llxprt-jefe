@@ -1,6 +1,7 @@
 use super::*;
 use crate::domain::{Agent, RemoteRepositorySettings, Repository, RepositoryId};
-use crate::state::types::{AppEvent, ModalState, ScreenMode};
+use crate::state::events::AppEvent;
+use crate::state::types::{ModalState, ScreenMode};
 
 fn seed_repository() -> Repository {
     Repository {

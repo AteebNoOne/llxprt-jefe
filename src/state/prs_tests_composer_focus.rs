@@ -9,7 +9,8 @@
 use super::prs_test_fixtures::prs_state_with_detail;
 use crate::domain::{IssueComment, PrCheck, PrCheckStatus, PrReview, PrReviewState, RepositoryId};
 use crate::state::AppState;
-use crate::state::types::{AppEvent, ComposerTarget, InlineState, PrDetailSubfocus};
+use crate::state::events::AppEvent;
+use crate::state::types::{ComposerTarget, InlineState, PrDetailSubfocus};
 
 /// Helper: a test comment.
 fn make_comment(id: u64, author: &str) -> IssueComment {

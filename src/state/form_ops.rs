@@ -1,14 +1,14 @@
 //! Form input handling: character insertion, deletion, cursor movement, field
 //! navigation, checkbox toggling, and form submission logic.
 
-use crate::domain::{AgentKind, SandboxEngine};
+use crate::domain::{AgentKind, RepositoryId, SandboxEngine};
 
 use super::AppState;
 use super::types::{
     AgentFormCursor, AgentFormFields, AgentFormFocus, ModalState, RepositoryFormCursor,
-    RepositoryFormFields, RepositoryFormFocus,
+    RepositoryFormFields, RepositoryFormFocus, WorkflowDispatchFormFocus,
 };
-use super::util::{delete_char_at, delete_char_before, insert_char_at, move_cursor_left};
+use super::util::{delete_char_at, delete_char_before, insert_char_at};
 
 impl AppState {
     fn handle_agent_shortcut_char(fields: &mut AgentFormFields, c: char) {
@@ -118,7 +118,22 @@ impl AppState {
     pub(super) fn handle_form_char(&mut self, c: char) {
         let agent_kinds = self.effective_agent_kinds_for_current_form();
         let repo_kinds = self.effective_agent_kinds_for_repository_form();
-        let refresh_work_dir = match &mut self.modal {
+        let refresh_work_dir = self.form_char_refreshes_work_dir(&agent_kinds, &repo_kinds, c);
+
+        if refresh_work_dir {
+            self.refresh_new_agent_work_dir();
+        }
+    }
+
+    /// Dispatch a typed character to the focused form field and return whether
+    /// the new-agent work-dir should be refreshed afterwards.
+    fn form_char_refreshes_work_dir(
+        &mut self,
+        agent_kinds: &[AgentKind],
+        repo_kinds: &[AgentKind],
+        c: char,
+    ) -> bool {
+        match &mut self.modal {
             ModalState::Search { query } => {
                 query.push(c);
                 false
@@ -138,7 +153,7 @@ impl AppState {
                 if crate::state::form_cursor::handle_repository_field_char(
                     fields, cursor, *focus, c,
                 ) {
-                    Self::toggle_repository_checkbox(&repo_kinds, fields, *focus);
+                    Self::toggle_repository_checkbox(repo_kinds, fields, *focus);
                 }
                 false
             }
@@ -148,28 +163,28 @@ impl AppState {
                 cursor,
                 work_dir_manual,
                 ..
-            } => Self::handle_new_agent_char(
-                &agent_kinds,
-                fields,
-                cursor,
-                *focus,
-                work_dir_manual,
-                c,
-            ),
+            } => {
+                Self::handle_new_agent_char(agent_kinds, fields, cursor, *focus, work_dir_manual, c)
+            }
             ModalState::EditAgent {
                 fields,
                 focus,
                 cursor,
                 ..
             } => {
-                let _ = Self::handle_agent_field_char(&agent_kinds, fields, cursor, *focus, c);
+                let _ = Self::handle_agent_field_char(agent_kinds, fields, cursor, *focus, c);
+                false
+            }
+            ModalState::WorkflowDispatch {
+                fields,
+                focus,
+                cursor,
+                ..
+            } => {
+                crate::state::form_workflow_dispatch::handle_field_char(fields, cursor, *focus, c);
                 false
             }
             _ => false,
-        };
-
-        if refresh_work_dir {
-            self.refresh_new_agent_work_dir();
         }
     }
 
@@ -368,6 +383,16 @@ impl AppState {
             } => {
                 Self::delete_agent_field_before_cursor(fields, cursor, *focus);
             }
+            ModalState::WorkflowDispatch {
+                fields,
+                focus,
+                cursor,
+                ..
+            } => {
+                crate::state::form_workflow_dispatch::delete_field_before_cursor(
+                    fields, cursor, *focus,
+                );
+            }
             _ => {}
         }
 
@@ -420,6 +445,16 @@ impl AppState {
             } => {
                 Self::delete_agent_field_at_cursor(fields, cursor, *focus);
             }
+            ModalState::WorkflowDispatch {
+                fields,
+                focus,
+                cursor,
+                ..
+            } => {
+                crate::state::form_workflow_dispatch::delete_field_at_cursor(
+                    fields, cursor, *focus,
+                );
+            }
             _ => {}
         }
 
@@ -434,61 +469,16 @@ impl AppState {
     pub(super) fn handle_form_move_cursor_left(&mut self) {
         match &mut self.modal {
             ModalState::NewRepository { focus, cursor, .. }
-            | ModalState::EditRepository { focus, cursor, .. } => match focus {
-                RepositoryFormFocus::DefaultAgentKind
-                | RepositoryFormFocus::RemoteEnabled
-                | RepositoryFormFocus::SetupEnvDefault => {}
-                RepositoryFormFocus::Name => {
-                    cursor.name = move_cursor_left(cursor.name);
-                }
-                RepositoryFormFocus::BaseDir => {
-                    cursor.base_dir = move_cursor_left(cursor.base_dir);
-                }
-                RepositoryFormFocus::DefaultProfile => {
-                    cursor.default_profile = move_cursor_left(cursor.default_profile);
-                }
-                RepositoryFormFocus::GitHubRepo => {
-                    cursor.github_repo = move_cursor_left(cursor.github_repo);
-                }
-                RepositoryFormFocus::LoginUser => {
-                    cursor.login_user = move_cursor_left(cursor.login_user);
-                }
-                RepositoryFormFocus::Host => {
-                    cursor.host = move_cursor_left(cursor.host);
-                }
-                RepositoryFormFocus::RunAsUser => {
-                    cursor.run_as_user = move_cursor_left(cursor.run_as_user);
-                }
-            },
+            | ModalState::EditRepository { focus, cursor, .. } => {
+                crate::state::form_cursor::move_repository_field_cursor_left(cursor, *focus);
+            }
             ModalState::NewAgent { focus, cursor, .. }
-            | ModalState::EditAgent { focus, cursor, .. } => match focus {
-                AgentFormFocus::Shortcut
-                | AgentFormFocus::AgentKind
-                | AgentFormFocus::PassContinue
-                | AgentFormFocus::Sandbox
-                | AgentFormFocus::SandboxEngine => {}
-                AgentFormFocus::Name => {
-                    cursor.name = move_cursor_left(cursor.name);
-                }
-                AgentFormFocus::Description => {
-                    cursor.description = move_cursor_left(cursor.description);
-                }
-                AgentFormFocus::WorkDir => {
-                    cursor.work_dir = move_cursor_left(cursor.work_dir);
-                }
-                AgentFormFocus::Profile => {
-                    cursor.profile = move_cursor_left(cursor.profile);
-                }
-                AgentFormFocus::Mode => {
-                    cursor.mode = move_cursor_left(cursor.mode);
-                }
-                AgentFormFocus::LlxprtDebug => {
-                    cursor.llxprt_debug = move_cursor_left(cursor.llxprt_debug);
-                }
-                AgentFormFocus::SandboxFlags => {
-                    cursor.sandbox_flags = move_cursor_left(cursor.sandbox_flags);
-                }
-            },
+            | ModalState::EditAgent { focus, cursor, .. } => {
+                crate::state::form_cursor::move_agent_field_cursor_left(cursor, *focus);
+            }
+            ModalState::WorkflowDispatch { focus, cursor, .. } => {
+                crate::state::form_workflow_dispatch::move_cursor_field_left(cursor, *focus);
+            }
             _ => {}
         }
     }
@@ -521,6 +511,14 @@ impl AppState {
                 cursor,
                 ..
             } => crate::state::form_cursor::move_agent_field_cursor_right(fields, cursor, *focus),
+            ModalState::WorkflowDispatch {
+                fields,
+                focus,
+                cursor,
+                ..
+            } => crate::state::form_cursor::move_workflow_dispatch_field_cursor_right(
+                fields, cursor, *focus,
+            ),
             _ => {}
         }
     }
@@ -537,6 +535,9 @@ impl AppState {
                 );
                 *focus = super::form_projection::next_visible_focus(*focus, visibility);
             }
+            ModalState::WorkflowDispatch { focus, .. } => {
+                *focus = focus.next();
+            }
             _ => {}
         }
     }
@@ -552,6 +553,9 @@ impl AppState {
                     super::form_projection::kind_from_form_value(&fields.agent_kind),
                 );
                 *focus = super::form_projection::prev_visible_focus(*focus, visibility);
+            }
+            ModalState::WorkflowDispatch { focus, .. } => {
+                *focus = focus.prev();
             }
             _ => {}
         }
@@ -674,41 +678,73 @@ impl AppState {
                 repository_id,
                 fields,
                 ..
-            } => {
-                let next_display_index = self.agents.len() + 1;
-                if let Some(repository) = self.repository_by_id(&repository_id).cloned()
-                    && let Some(agent) =
-                        Self::create_agent_from_fields(&repository, &fields, next_display_index)
-                {
-                    self.enforce_shortcut_uniqueness(&agent.id, agent.shortcut_slot);
-                    self.agents.push(agent);
-                    self.selected_agent_index = Some(self.agents.len() - 1);
-                    self.remember_selected_agent_for_current_repo();
-                    self.modal = ModalState::None;
-                }
-            }
-            ModalState::EditAgent { id, fields, .. } => {
-                if fields.name.trim().is_empty() {
-                    return;
-                }
-
-                self.enforce_shortcut_uniqueness(&id, fields.shortcut_slot);
-                let repository = self.repository_for_agent(&id).cloned();
-                if let Some(repository) = repository {
-                    if Self::validated_agent_work_dir(&repository, &fields.work_dir).is_none() {
-                        return;
-                    }
-                    if let Some(agent) = self.agents.iter_mut().find(|a| a.id == id) {
-                        Self::update_agent_from_fields(agent, &repository, &fields);
-                    }
-                }
-                self.remember_selected_agent_for_current_repo();
-                self.modal = ModalState::None;
-            }
+            } => self.submit_new_agent(&repository_id, &fields),
+            ModalState::EditAgent { id, fields, .. } => self.submit_edit_agent(&id, &fields),
+            ModalState::WorkflowDispatch { focus, .. } => self.submit_workflow_dispatch(focus),
             _ => {
                 self.modal = ModalState::None;
             }
         }
+    }
+
+    fn submit_new_agent(&mut self, repository_id: &RepositoryId, fields: &AgentFormFields) {
+        let next_display_index = self.agents.len() + 1;
+        if let Some(repository) = self.repository_by_id(repository_id).cloned()
+            && let Some(agent) =
+                Self::create_agent_from_fields(&repository, fields, next_display_index)
+        {
+            self.enforce_shortcut_uniqueness(&agent.id, agent.shortcut_slot);
+            self.agents.push(agent);
+            self.selected_agent_index = Some(self.agents.len() - 1);
+            self.remember_selected_agent_for_current_repo();
+            self.modal = ModalState::None;
+        }
+    }
+
+    fn submit_edit_agent(&mut self, id: &crate::domain::AgentId, fields: &AgentFormFields) {
+        if fields.name.trim().is_empty() {
+            return;
+        }
+
+        self.enforce_shortcut_uniqueness(id, fields.shortcut_slot);
+        let repository = self.repository_for_agent(id).cloned();
+        if let Some(repository) = repository {
+            if Self::validated_agent_work_dir(&repository, &fields.work_dir).is_none() {
+                return;
+            }
+            if let Some(agent) = self.agents.iter_mut().find(|a| &a.id == id) {
+                Self::update_agent_from_fields(agent, &repository, fields);
+            }
+        }
+        self.remember_selected_agent_for_current_repo();
+        self.modal = ModalState::None;
+    }
+
+    fn submit_workflow_dispatch(&mut self, focus: WorkflowDispatchFormFocus) {
+        match focus {
+            WorkflowDispatchFormFocus::Cancel => {
+                self.modal = ModalState::None;
+            }
+            // The authoritative submit path is `handle_workflow_dispatch_submit`
+            // in app_input/modal_handlers.rs, which validates the ref, resolves
+            // the repository, closes the modal, and emits the dispatch message.
+            // This reducer arm must NOT close the modal on its own: if a stray
+            // `SubmitForm` ever reaches a WorkflowDispatch modal without going
+            // through the handler, closing here would silently swallow the
+            // dispatch. Leave the modal open so the user can retry.
+            WorkflowDispatchFormFocus::Submit
+            | WorkflowDispatchFormFocus::RefName
+            | WorkflowDispatchFormFocus::Inputs => {}
+        }
+    }
+
+    /// Validate a WorkflowDispatch submit. Returns the parsed params if the
+    /// ref_name is non-empty, or `None` if validation failed (in which case
+    /// the caller should keep the modal open). Delegates to the pure parser
+    /// in [`form_workflow_dispatch`] (newline-separated `key=value` pairs).
+    #[must_use]
+    pub fn parse_workflow_dispatch_inputs(inputs: &str) -> Vec<(String, String)> {
+        crate::state::form_workflow_dispatch::parse_inputs(inputs)
     }
 }
 

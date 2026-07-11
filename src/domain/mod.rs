@@ -11,6 +11,11 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+// Actions domain types (workflows, runs, jobs, steps, filters) extracted to
+// keep this file under the source-file-size limit.
+mod actions;
+pub use actions::*;
+
 /// Stable identifier for a repository.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RepositoryId(pub String);

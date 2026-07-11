@@ -402,6 +402,14 @@ fn apply_theme_picker_selection(app_state: &mut AppStateHandle, ctx: &SharedCont
 }
 
 fn handle_form_submit(app_state: &mut AppStateHandle, ctx: &SharedContext) {
+    // Check if this is a WorkflowDispatch modal submit — route it through
+    // the Actions orchestration so the dispatch actually happens.
+    let dispatch_info = extract_workflow_dispatch_info(app_state);
+    if let Some(info) = dispatch_info {
+        handle_workflow_dispatch_submit(app_state, ctx, info);
+        return;
+    }
+
     // Validate local installed-kind availability BEFORE applying SubmitForm
     // (which closes the modal). This keeps the modal open with a visible
     // error when the selected agent kind is not installed for a local
@@ -487,6 +495,102 @@ fn validate_form_kind_available(app_state: &mut AppStateHandle) -> bool {
     let (kind, remote) = selection;
 
     super::availability::local_kind_available_or_error(app_state, kind, &remote)
+}
+
+/// Extract workflow dispatch form data if the modal is a WorkflowDispatch
+/// with focus on Submit or Cancel.
+struct WorkflowDispatchInfo {
+    workflow_id: String,
+    ref_name: String,
+    inputs_raw: String,
+    is_cancel: bool,
+}
+
+fn extract_workflow_dispatch_info(app_state: &AppStateHandle) -> Option<WorkflowDispatchInfo> {
+    let (workflow_id, ref_name, inputs_raw, is_cancel, is_submit) = {
+        let state = app_state.read();
+        let ModalState::WorkflowDispatch {
+            workflow,
+            fields,
+            focus,
+            ..
+        } = &state.modal
+        else {
+            return None;
+        };
+        let is_cancel = matches!(focus, jefe::state::WorkflowDispatchFormFocus::Cancel);
+        let is_submit = matches!(focus, jefe::state::WorkflowDispatchFormFocus::Submit);
+        let info = (
+            workflow.id.to_string(),
+            fields.ref_name.clone(),
+            fields.inputs.clone(),
+            is_cancel,
+            is_submit,
+        );
+        drop(state);
+        info
+    };
+    if !is_submit && !is_cancel {
+        return None;
+    }
+    Some(WorkflowDispatchInfo {
+        workflow_id,
+        ref_name,
+        inputs_raw,
+        is_cancel,
+    })
+}
+
+/// Handle a WorkflowDispatch submit: close the modal and dispatch the workflow
+/// (or just close if Cancel).
+fn handle_workflow_dispatch_submit(
+    app_state: &mut AppStateHandle,
+    ctx: &SharedContext,
+    info: WorkflowDispatchInfo,
+) {
+    if info.is_cancel {
+        close_modal_and_persist(app_state, ctx);
+        return;
+    }
+    // Validate ref_name
+    let trimmed_ref = info.ref_name.trim();
+    if trimmed_ref.is_empty() {
+        let mut state = app_state.write();
+        state.actions_state.error = Some("Ref name is required".to_string());
+        let persisted = to_persisted_state(&state);
+        drop(state);
+        persist_state(ctx, &persisted);
+        return;
+    }
+    // Parse inputs (cheap, no state access).
+    let inputs = jefe::state::AppState::parse_workflow_dispatch_inputs(&info.inputs_raw);
+    // Validate the repository BEFORE closing the modal: if there is no
+    // selected repository, surface an error and keep the modal open so the
+    // user sees the failure instead of a silent no-op dispatch.
+    let scope_repo_id = {
+        let state = app_state.read();
+        state.selected_repository().map(|r| r.id.clone())
+    };
+    // Validate the repository BEFORE closing the modal: if there is no
+    // selected repository, surface an error and keep the modal open so the
+    // user sees the failure instead of a silent no-op dispatch.
+    let Some(scope_repo_id) = scope_repo_id else {
+        let mut state = app_state.write();
+        state.actions_state.error = Some("No repository selected".to_string());
+        let persisted = to_persisted_state(&state);
+        drop(state);
+        persist_state(ctx, &persisted);
+        return;
+    };
+    // All validation passed — close the modal now so the dispatch proceeds.
+    close_modal_and_persist(app_state, ctx);
+    let message = jefe::messages::ActionsMessage::WorkflowDispatchSubmitted {
+        scope_repo_id,
+        workflow_id: info.workflow_id,
+        ref_name: trimmed_ref.to_string(),
+        inputs,
+    };
+    super::actions_orchestration::dispatch_actions_message(app_state, ctx, message);
 }
 
 fn submit_form_and_snapshot_launch(
