@@ -330,12 +330,11 @@ impl AppState {
             AppEvent::IssuesNavigatePageDown => self.navigate_issue_list_page_down(),
             AppEvent::IssuesNavigateHome => self.navigate_issue_list_home(),
             AppEvent::IssuesNavigateEnd => self.navigate_issue_list_end(),
-            AppEvent::IssuesEnter => {
+            AppEvent::IssuesEnter
                 if self.issues_state.issue_focus == IssueFocus::IssueList
-                    && self.issues_state.selected_issue_index.is_some()
-                {
-                    self.issues_state.issue_focus = IssueFocus::IssueDetail;
-                }
+                    && self.issues_state.selected_issue_index.is_some() =>
+            {
+                self.issues_state.issue_focus = IssueFocus::IssueDetail;
             }
             AppEvent::IssuesCycleFocus => self.cycle_issues_focus(),
             AppEvent::IssuesCycleFocusReverse => self.cycle_issues_focus_reverse(),

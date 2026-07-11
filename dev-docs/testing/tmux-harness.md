@@ -146,6 +146,10 @@ manual/opt-in and also skips when `tmux` cannot be installed or found.
 - [`scratch-pr-mode.json`](../tmux-scenarios/scratch-pr-mode.json): manual
   scratch scenario for PR-mode screen validation. It is intentionally not a CI
   gate because repository/GitHub configuration can vary by developer machine.
+- [`actions-mode.json`](../tmux-scenarios/actions-mode.json): launches the app,
+  enters Actions mode (`g`), verifies the runs-list pane renders, navigates
+  down, then exits and quits. Intentionally not a CI gate — it requires a
+  configured repository and may vary by developer machine.
 
 ## Future regression scenarios
 

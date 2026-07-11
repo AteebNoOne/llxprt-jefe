@@ -94,6 +94,7 @@ pub fn pane_content_lines(
         SelectablePane::PrDetail => pr_detail_lines(state),
         SelectablePane::IssueList => issue_list_lines(state, term_cols, term_rows),
         SelectablePane::PrList => pr_list_lines(state, term_cols, term_rows),
+        SelectablePane::ActionsList | SelectablePane::ActionsDetail => PaneContent::empty(pane),
         SelectablePane::Sidebar => sidebar_lines(state),
         SelectablePane::AgentList => agent_list_lines(state),
         SelectablePane::Preview => preview_lines(state),

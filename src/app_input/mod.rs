@@ -24,6 +24,8 @@ mod prs_mutation;
 // @plan PLAN-20260624-PR-MODE.P11
 mod prs_orchestration;
 
+mod actions;
+mod actions_orchestration;
 mod gh_async;
 
 mod agent_runtime;
@@ -526,6 +528,9 @@ pub fn dispatch_app_message(
         // @pseudocode component-004 lines 97-118
         AppMessage::PullRequests(message) => {
             prs_orchestration::dispatch_prs_message(app_state, ctx, message);
+        }
+        AppMessage::Actions(message) => {
+            actions_orchestration::dispatch_actions_message(app_state, ctx, message);
         }
         message => apply_and_persist(app_state, ctx, AppEvent::from(message)),
     }
