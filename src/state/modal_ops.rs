@@ -4,7 +4,9 @@
 //! length limit. These methods open/close/edit modal forms and handle
 //! repository/agent-related UI messages.
 
-use crate::domain::{AgentId, DEFAULT_SANDBOX_FLAGS, RepositoryId, SandboxEngine};
+use crate::domain::{
+    AgentId, AgentKind, DEFAULT_SANDBOX_FLAGS, Repository, RepositoryId, SandboxEngine,
+};
 use crate::messages::{ModalMessage, RepositoryAgentMessage};
 
 use super::AppState;
@@ -12,6 +14,32 @@ use super::types::{
     AgentFormCursor, AgentFormFields, AgentFormFocus, ConfirmFocus, ModalState,
     RepositoryFormCursor, RepositoryFormFields, RepositoryFormFocus,
 };
+
+#[derive(Default)]
+struct NewAgentRepositoryDefaults {
+    base_dir: String,
+    profile: String,
+    code_puppy_model: String,
+    agent_kind: AgentKind,
+    remote_enabled: bool,
+}
+
+fn new_agent_repository_defaults(
+    repositories: &[Repository],
+    repository_id: &RepositoryId,
+) -> NewAgentRepositoryDefaults {
+    repositories
+        .iter()
+        .find(|repository| repository.id == *repository_id)
+        .map(|repository| NewAgentRepositoryDefaults {
+            base_dir: repository.base_dir.to_string_lossy().into_owned(),
+            profile: repository.default_profile.clone(),
+            code_puppy_model: repository.default_code_puppy_model.clone(),
+            agent_kind: repository.default_agent_kind,
+            remote_enabled: repository.remote.enabled,
+        })
+        .unwrap_or_default()
+}
 
 impl AppState {
     pub(super) fn apply_modal_message(&mut self, message: ModalMessage) {
@@ -114,23 +142,16 @@ impl AppState {
     }
 
     fn open_new_agent_modal(&mut self, repository_id: RepositoryId) {
-        let (base_dir, default_profile, repo_default_kind, remote_enabled) = self
-            .repositories
-            .iter()
-            .find(|r| r.id == repository_id)
-            .map(|r| {
-                (
-                    r.base_dir.to_string_lossy().into_owned(),
-                    r.default_profile.clone(),
-                    r.default_agent_kind,
-                    r.remote.enabled,
-                )
-            })
-            .unwrap_or_default();
+        let NewAgentRepositoryDefaults {
+            base_dir,
+            profile: default_profile,
+            code_puppy_model: default_code_puppy_model,
+            agent_kind: repo_default_kind,
+            remote_enabled,
+        } = new_agent_repository_defaults(&self.repositories, &repository_id);
 
-        // Initialize the agent kind to the repository's default when it is
-        // installed (or the repo is remote — remote resolution is
-        // authoritative). Otherwise fall back to the first installed kind.
+        // Remote repositories trust their configured runtime; local ones must
+        // fall back when that runtime is not installed.
         let agent_kind =
             if remote_enabled || self.installed_agent_kinds.contains(&repo_default_kind) {
                 repo_default_kind
@@ -143,10 +164,8 @@ impl AppState {
 
         let work_dir_len = base_dir.chars().count();
         let profile_len = default_profile.chars().count();
+        let code_puppy_model_len = default_code_puppy_model.chars().count();
 
-        // Default mode string: LLxprt agents launch with `--yolo`; others
-        // start empty. Computed once and reused for both the field value and
-        // the cursor length to keep them in sync.
         let default_mode = if agent_kind == crate::domain::AgentKind::Llxprt {
             "--yolo"
         } else {
@@ -161,7 +180,7 @@ impl AppState {
                 description: String::new(),
                 work_dir: base_dir,
                 profile: default_profile,
-                code_puppy_model: String::new(),
+                code_puppy_model: default_code_puppy_model,
                 code_puppy_yolo: false,
                 code_puppy_quick_resume: crate::domain::QuickResume::default(),
                 agent_kind: agent_kind.label().to_owned(),
@@ -175,7 +194,7 @@ impl AppState {
             cursor: AgentFormCursor {
                 work_dir: work_dir_len,
                 profile: profile_len,
-                code_puppy_model: 0,
+                code_puppy_model: code_puppy_model_len,
                 mode: default_mode.chars().count(),
                 sandbox_flags: DEFAULT_SANDBOX_FLAGS.chars().count(),
                 ..AgentFormCursor::default()
