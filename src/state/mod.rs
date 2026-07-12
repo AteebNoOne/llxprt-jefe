@@ -916,9 +916,7 @@ mod prs_test_fixtures;
 #[path = "prs_tests_composer_focus.rs"]
 mod prs_tests_composer_focus;
 
-/// @plan PLAN-20260624-PR-MODE.P14
-/// @requirement REQ-PR-010
-/// @pseudocode component-001 lines 44-50
+/// @plan PLAN-20260624-PR-MODE.P14 @requirement REQ-PR-010
 #[cfg(test)]
 #[path = "prs_tests_cursor_arrows.rs"]
 mod prs_tests_cursor_arrows;
@@ -940,6 +938,9 @@ mod prs_tests_silent_refresh;
 #[path = "prs_tests_review_threads.rs"]
 mod prs_tests_review_threads;
 
+#[cfg(test)]
+#[path = "prs_tests_bodyless_review_nav.rs"]
+mod prs_tests_bodyless_review_nav;
 // @plan PLAN-20260624-PR-MODE.P15 @requirement REQ-PR-001
 #[cfg(test)]
 #[path = "prs_integration_tests.rs"]
