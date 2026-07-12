@@ -251,6 +251,7 @@ fn preflight_or_prompt(
             signature: signature.clone(),
             issue,
             remaining_issues: Vec::new(),
+            confirm_focus: jefe::state::ConfirmFocus::Cancel,
         };
         let persisted = to_persisted_state(&state);
         drop(state);
@@ -973,14 +974,15 @@ mod tests;
 #[cfg(test)]
 #[path = "issue_send_modal_tests.rs"]
 mod issue_send_modal_tests;
-
+#[cfg(test)]
+#[path = "modal_handlers_tests.rs"]
+mod modal_handlers_tests;
 #[cfg(test)]
 #[path = "preflight_gating_tests.rs"]
 mod preflight_gating_tests;
 
 // @plan PLAN-20260624-PR-MODE.P15
 // @requirement REQ-PR-001
-// @pseudocode component-001 lines 66-291
 #[cfg(test)]
 #[path = "prs_integration_tests.rs"]
 mod prs_integration_tests;
@@ -991,7 +993,6 @@ mod prs_integration_tests;
 #[cfg(test)]
 #[path = "prs_integration_tests_lifecycle.rs"]
 mod prs_integration_tests_lifecycle;
-
 // Extracted from `prs_dispatch.rs` to keep that handler module under the
 // per-file line limit.
 #[cfg(test)]
