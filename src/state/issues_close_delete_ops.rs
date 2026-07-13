@@ -62,8 +62,8 @@ impl AppState {
             return Some(detail.number);
         }
         self.issues_state
-            .selected_issue_index
-            .and_then(|idx| self.issues_state.issues.get(idx))
+            .selected_issue_index()
+            .and_then(|idx| self.issues_state.issues().get(idx))
             .map(|issue| issue.number)
     }
 
@@ -73,8 +73,8 @@ impl AppState {
             return Some(detail.state);
         }
         self.issues_state
-            .selected_issue_index
-            .and_then(|idx| self.issues_state.issues.get(idx))
+            .selected_issue_index()
+            .and_then(|idx| self.issues_state.issues().get(idx))
             .map(|issue| issue.state)
     }
 
@@ -180,7 +180,7 @@ impl AppState {
             Some(detail.node_id.clone())
         } else {
             self.issues_state
-                .issues
+                .issues()
                 .iter()
                 .find(|issue| issue.number == issue_number)
                 .map(|issue| issue.node_id.clone())
@@ -210,14 +210,11 @@ impl AppState {
             return true;
         }
         self.issues_state.close_mutation_pending = None;
-        if let Some(issue) = self
-            .issues_state
-            .issues
-            .iter_mut()
-            .find(|i| i.number == issue_number)
-        {
+        let mut issues = self.issues_state.list.items().to_vec();
+        if let Some(issue) = issues.iter_mut().find(|i| i.number == issue_number) {
             issue.state = IssueState::Closed;
         }
+        self.issues_state.list.replace_items(issues);
         if let Some(detail) = &mut self.issues_state.issue_detail
             && detail.number == issue_number
         {
@@ -254,12 +251,12 @@ impl AppState {
         // rather than silently landing on whichever issue now occupies the slot).
         let deleted_index = self
             .issues_state
-            .issues
+            .issues()
             .iter()
             .position(|issue| issue.number == issue_number);
-        self.issues_state
-            .issues
-            .retain(|issue| issue.number != issue_number);
+        let mut issues = self.issues_state.list.items().to_vec();
+        issues.retain(|issue| issue.number != issue_number);
+        self.issues_state.list.replace_items(issues);
         if self
             .issues_state
             .issue_detail
@@ -283,22 +280,23 @@ impl AppState {
     ///   if it was the final row, the clamp below moves it to the new last row.
     /// - List empty: clear the selection.
     fn fix_issue_selection_after_delete(&mut self, deleted_index: Option<usize>) {
-        if self.issues_state.issues.is_empty() {
-            self.issues_state.selected_issue_index = None;
+        if self.issues_state.issues().is_empty() {
+            self.issues_state.list.set_selected_index(None);
             return;
         }
-        let max_idx = self.issues_state.issues.len() - 1;
-        match (deleted_index, self.issues_state.selected_issue_index) {
+        let max_idx = self.issues_state.issues().len() - 1;
+        let current = self.issues_state.selected_issue_index();
+        match (deleted_index, current) {
             (Some(deleted), Some(sel)) if deleted < sel => {
                 // An earlier row was removed: shift the selection down to track
                 // the same issue.
-                self.issues_state.selected_issue_index = Some(sel - 1);
+                self.issues_state.list.set_selected_index(Some(sel - 1));
             }
             _ => {
-                if let Some(idx) = self.issues_state.selected_issue_index
+                if let Some(idx) = current
                     && idx > max_idx
                 {
-                    self.issues_state.selected_issue_index = Some(max_idx);
+                    self.issues_state.list.set_selected_index(Some(max_idx));
                 }
             }
         }

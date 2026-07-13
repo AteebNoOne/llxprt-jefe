@@ -14,12 +14,12 @@ use crate::state::{
 fn issues_state_with_list(repo_id: &str) -> AppState {
     let mut state = AppState::default();
     state.issues_state.active = true;
-    state.issues_state.issues = vec![
+    state.issues_state.list.replace_items(vec![
         make_issue(1, "I_1"),
         make_issue(2, "I_2"),
         make_issue(3, "I_3"),
-    ];
-    state.issues_state.selected_issue_index = Some(0);
+    ]);
+    state.issues_state.list.set_selected_index(Some(0));
     state.issues_state.issue_focus = IssueFocus::IssueList;
     let repo = crate::domain::Repository::new(
         RepositoryId(repo_id.to_string()),
@@ -90,7 +90,9 @@ fn close_issue_sets_close_mutation_pending() {
 #[test]
 fn close_issue_when_already_closed_sets_notice() {
     let mut state = issues_state_with_list("repo-1");
-    state.issues_state.issues[0].state = IssueState::Closed;
+    let mut issues = state.issues_state.list.items().to_vec();
+    issues[0].state = IssueState::Closed;
+    state.issues_state.list.replace_items(issues);
     let state = state.apply(AppEvent::CloseIssue);
     assert!(
         state.issues_state.close_mutation_pending.is_none(),
@@ -105,7 +107,7 @@ fn close_issue_when_already_closed_sets_notice() {
 #[test]
 fn close_issue_with_no_issue_focused_shows_notice() {
     let mut state = issues_state_with_list("repo-1");
-    state.issues_state.selected_issue_index = None;
+    state.issues_state.list.set_selected_index(None);
     state.issues_state.issue_detail = None;
     let state = state.apply(AppEvent::CloseIssue);
     assert!(
@@ -157,7 +159,7 @@ fn issue_closed_updates_list_and_detail_state() {
         issue_number: 1,
         mutation_id,
     });
-    let list_issue = state.issues_state.issues.iter().find(|i| i.number == 1);
+    let list_issue = state.issues_state.issues().iter().find(|i| i.number == 1);
     assert!(
         list_issue.is_some_and(|i| i.state == IssueState::Closed),
         "list row state should be Closed"
@@ -221,7 +223,7 @@ fn issue_closed_with_wrong_scope_is_ignored() {
     assert!(
         state
             .issues_state
-            .issues
+            .issues()
             .iter()
             .find(|i| i.number == 1)
             .is_some_and(|i| i.state == IssueState::Open),
@@ -248,7 +250,7 @@ fn issue_deleted_with_wrong_scope_is_ignored() {
         "wrong-scope delete result should NOT clear the pending"
     );
     assert!(
-        state.issues_state.issues.iter().any(|i| i.number == 1),
+        state.issues_state.issues().iter().any(|i| i.number == 1),
         "wrong-scope delete result must NOT remove the local issue"
     );
 }
@@ -269,7 +271,7 @@ fn open_delete_confirm_from_list() {
 #[test]
 fn open_delete_confirm_with_no_issue_shows_notice() {
     let mut state = issues_state_with_list("repo-1");
-    state.issues_state.selected_issue_index = None;
+    state.issues_state.list.set_selected_index(None);
     state.issues_state.issue_detail = None;
     let state = state.apply(AppEvent::OpenDeleteIssueConfirm);
     assert!(
@@ -378,7 +380,7 @@ fn issue_deleted_removes_from_list_and_clears_detail() {
         mutation_id: 1,
     });
     assert!(
-        !state.issues_state.issues.iter().any(|i| i.number == 1),
+        !state.issues_state.issues().iter().any(|i| i.number == 1),
         "deleted issue should be removed from list"
     );
     assert!(
@@ -393,14 +395,14 @@ fn issue_deleted_removes_from_list_and_clears_detail() {
     // Deleting the selected (index 0) non-final issue keeps the index at 0,
     // which now points at the next issue (#2).
     assert_eq!(
-        state.issues_state.selected_issue_index,
+        state.issues_state.selected_issue_index(),
         Some(0),
         "selection index should stay at 0 (now pointing at the next issue)"
     );
     assert!(
         state
             .issues_state
-            .issues
+            .issues()
             .first()
             .is_some_and(|i| i.number == 2),
         "issue #2 should now be at index 0"
@@ -418,8 +420,11 @@ fn issue_deleted_when_last_in_list_clears_selection() {
     // Start with a single issue so deletion empties the list — exercises the
     // fix_issue_selection_after_delete empty-list branch.
     let mut state = issues_state_with_list("repo-1");
-    state.issues_state.issues = vec![make_issue(7, "I_7")];
-    state.issues_state.selected_issue_index = Some(0);
+    state
+        .issues_state
+        .list
+        .replace_items(vec![make_issue(7, "I_7")]);
+    state.issues_state.list.set_selected_index(Some(0));
     state.issues_state.issue_detail = Some(make_detail(7, "I_7"));
     state.issues_state.delete_mutation_pending = Some(IssueLifecycleMutationPending {
         scope_repo_id: RepositoryId("repo-1".to_string()),
@@ -433,11 +438,11 @@ fn issue_deleted_when_last_in_list_clears_selection() {
         mutation_id: 1,
     });
     assert!(
-        state.issues_state.issues.is_empty(),
+        state.issues_state.issues().is_empty(),
         "list should be empty after deleting the last issue"
     );
     assert!(
-        state.issues_state.selected_issue_index.is_none(),
+        state.issues_state.selected_issue_index().is_none(),
         "selection should be cleared when the list becomes empty"
     );
     assert!(
@@ -452,7 +457,7 @@ fn issue_deleted_shifts_selection_when_earlier_row_removed() {
     // pointing at the same issue instead of landing on a different one.
     let mut state = issues_state_with_list("repo-1");
     // issues are #1, #2, #3 at indices 0, 1, 2; select #3 (index 2), delete #1.
-    state.issues_state.selected_issue_index = Some(2);
+    state.issues_state.list.set_selected_index(Some(2));
     state.issues_state.delete_mutation_pending = Some(IssueLifecycleMutationPending {
         scope_repo_id: RepositoryId("repo-1".to_string()),
         mutation_id: 1,
@@ -466,14 +471,14 @@ fn issue_deleted_shifts_selection_when_earlier_row_removed() {
     });
     // After removing #1, the list is [#2, #3]; #3 is now at index 1.
     assert_eq!(
-        state.issues_state.selected_issue_index,
+        state.issues_state.selected_issue_index(),
         Some(1),
         "selection should shift down to track issue #3"
     );
     let selected = state
         .issues_state
-        .selected_issue_index
-        .and_then(|idx| state.issues_state.issues.get(idx));
+        .selected_issue_index()
+        .and_then(|idx| state.issues_state.issues().get(idx));
     assert!(
         selected.is_some_and(|i| i.number == 3),
         "focused issue should still be #3 after an earlier delete"
@@ -499,7 +504,7 @@ fn issue_deleted_with_wrong_mutation_id_is_ignored() {
         "stale mutation id should NOT clear pending"
     );
     assert!(
-        state.issues_state.issues.iter().any(|i| i.number == 1),
+        state.issues_state.issues().iter().any(|i| i.number == 1),
         "issue should NOT be removed for stale mutation id"
     );
 }

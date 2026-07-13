@@ -13,7 +13,7 @@ use super::*;
 fn issues_state_with_issue_list() -> AppState {
     use jefe::domain::{Issue, IssueState};
     let mut state = issues_base_state();
-    state.issues_state.issues = vec![Issue {
+    state.issues_state.list.replace_items(vec![Issue {
         number: 1,
         node_id: String::new(),
         title: "Test".to_string(),
@@ -29,8 +29,8 @@ fn issues_state_with_issue_list() -> AppState {
         module: String::new(),
         comment_count: 0,
         body: String::new(),
-    }];
-    state.issues_state.selected_issue_index = Some(0);
+    }]);
+    state.issues_state.list.set_selected_index(Some(0));
     state
 }
 
